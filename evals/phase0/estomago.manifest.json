@@ -1,0 +1,10 @@
+{
+  "fixture_id": "ph0_estomago",
+  "entry": "estomago",
+  "png": "evals/phase0/fixtures/estomago.png",
+  "png_sha256": "ed5f82d003ce035643b5b2951626a833ab51b80f15db369f047b75b95b875b81",
+  "code_length": 6,
+  "alphabet": "deconfused_uppercase_digit",
+  "created_at": "2026-09-29T12:14:24+00:00",
+  "note": "答案只存在于像素中；sidecar/日志/清单不含码。每入口独立随机。"
+}

@@ -3,7 +3,7 @@
 声音证据服务 · Claude 工具组显示名 **“我只听你”** · 总原则：**证据给我，意思我自己听。**
 
 - 实施基线：`docs/pack/Oido_Architecture_owner_v1.1.md` + `docs/pack/Oido_Execution_GLM_v1.1.md`（OIDO-ARCH/EXEC-1.1），决策 `docs/pack/AUDITORY_DECISIONS.md`（D01–D10 锁定）。
-- 当前状态：**部分交付（WP00 完成；WP01 + WP03 P0 采样率正确性落地）**。诚实清单见 `docs/IMPLEMENTATION_REPORT.md` 与 `acceptance.json`，未完成项不装完成。
+- 当前状态：**WP00 + WP01 + WP03 的 P0 基础层完成**（评审定名，非"首期功能完成"——韵律谱/渲染/MCP/真实语音验收未落地）。Phase 0 四入口测试已武装（`evals/phase0/PROTOCOL.md`）。诚实清单见 `docs/IMPLEMENTATION_REPORT.md` 与 `acceptance.json`。
 
 ## 快速开始
 

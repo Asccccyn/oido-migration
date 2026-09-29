@@ -8,3 +8,5 @@ __pycache__/
 *.sqlite3-wal
 *.sqlite3-shm
 /tmp/
+evals/phase0/secrets/
+evals/phase0/answers/

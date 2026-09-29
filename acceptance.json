@@ -6,7 +6,7 @@
   "implementation_commit": "ca1aba6c0da070b9875b1e970e9e0e8528d817ef (wp01-wp03-foundation)",
   "working_tree_manifest": "docs/WP00_BASELINE.md",
   "overall_status": "partial",
-  "overall_status_note": "WP00 完成；WP01/WP03(P0 部分) 代码与测试落地。绝大多数能力未开始，见 capabilities。不得据此宣布产品可用。",
+  "overall_status_note": "评审定名：WP00 + WP01 + WP03 的 P0 基础层完成（非首期功能完成——韵律谱/渲染/MCP/真实语音验收未落地）。评审裁定与新增硬规则见 docs/REVIEW_20260929.md。",
   "capabilities": [
     {"id": "C01", "status": "partial", "tests": ["tests/contract/test_analysis_job.py"], "blockers": ["Siren 受信导入(WP10)未接", "媒体探测子进程(WP02)未实现，ffmpeg 未安装"]},
     {"id": "C02", "status": "not_run", "tests": [], "blockers": ["WP03 波形包络未实现"]},
@@ -42,7 +42,7 @@
     "A14": {"status": "not_run"},
     "B16": {"status": "not_run"},
     "B17": {"status": "partial", "evidence": "tests/unit/test_pitch.py（字内/句级字段分离的数学层）；真实对齐未实现"},
-    "B20": {"status": "pass", "evidence": "tests/unit/test_evidence.py::TestEmotionBoundary（扁平/嵌套/六类情绪值零泄漏）"},
+    "B20": {"status": "pass", "evidence": "tests/unit/test_evidence.py::TestEmotionBoundary（扁平/嵌套/六类情绪值零泄漏）+ tests/unit/test_b20_persistence_boundary.py（持久层第二道闸：parameters 嵌套情绪不落库、全表扫描零情绪值）"},
     "E07": {"status": "pass", "evidence": "tests/contract/test_analysis_job.py::TestVisibility（存在性统一口径）"},
     "E08": {"status": "partial", "evidence": "tests/security/test_no_url_ingress.py（工具合同无 url/path）+ test_atomic_objects 路径穿越拒绝；服务面待 WP02"},
     "E11": {"status": "pass", "evidence": "tests/contract/test_analysis_job.py::TestIdempotencyE11"},
@@ -50,11 +50,21 @@
     "other": "not_run"
   },
   "hosts": [
-    {"host": "claude_web", "client_version": null, "status": "not_run"},
-    {"host": "claude_ios", "client_version": null, "status": "not_run"},
-    {"host": "claude_code", "client_version": null, "status": "not_run"},
-    {"host": "estomago", "client_version": "0.2.2 (SDK 0.3.283)", "status": "not_run"}
+    {"host": "claude_web", "client_version": null, "status": "not_run",
+     "note": "夹具+提示词 kit 已备（evals/phase0/PROTOCOL.md）；待宿主用户手动发送，约 1 分钟"},
+    {"host": "claude_ios", "client_version": null, "status": "not_run",
+     "note": "同上；需 AirDrop 夹具到手机"},
+    {"host": "claude_code", "client_version": null, "status": "blocked",
+     "note": "本机未装 claude CLI；安装+登录待宿主用户批准（REVIEW 裁定 1 已批测试本身）"},
+    {"host": "estomago", "client_version": "0.2.2 (SDK 0.3.283)", "status": "blocked",
+     "note": "探针已武装并自检（scripts/phase0_probe_estomago.mjs，临时 home/无身份/授权门/SDK 解析验证通过）；本 shell 无 Claude 认证环境，待宿主用户在授权环境执行"}
   ],
+  "phase0": {
+    "protocol": "evals/phase0/PROTOCOL.md",
+    "fixtures": "evals/phase0/fixtures/*.png（每入口独立随机码，答案只在像素中）",
+    "secrets": "evals/phase0/secrets/（0600，gitignore，校验只输出 MATCH/MISMATCH）",
+    "rule": "四行全 MATCH 前任何宿主不得把 oido_view 原生图像当默认能力"
+  },
   "test_runs": [
     {"command": ".venv/bin/python scripts/supervise_tests.py --timeout-seconds 180 --rss-limit-mib 1024 -- .venv/bin/python -m pytest -x -q tests/unit/test_timebase.py tests/unit/test_pitch.py tests/unit/test_states.py tests/unit/test_evidence.py tests/unit/test_rms.py", "result": "57 passed, exit 0"},
     {"command": ".venv/bin/python scripts/supervise_tests.py --timeout-seconds 300 --rss-limit-mib 2048 -- .venv/bin/python -m pytest -q tests/unit/test_f0_explicit_sr.py", "result": "8 passed, exit 0（含 numba 冷启动）"},
@@ -69,6 +79,12 @@
   },
   "new_cloud_audio_inference": "forbidden",
   "production_changes": [],
+  "constraints_from_review_20260929": [
+    "硬规则：oído 只收 asset_id/bytes，绝不接受 URL；Siren URL 转写仅是兼容导入路径，不是必经入口，S-GAP-1 未修不得卡 oído 本体",
+    "声学基线链路约束：删除/导出/清空链路验收通过前，不得用真实宿主用户语音建立 qiaosheng 基线（D06 批准≠可先灌私人数据）",
+    "A01 之外，WP04 验收必须补人工可核验普通话短句夹具（真人声/清音/气声/三声变调），不得只靠正弦波",
+    "ffmpeg 9.0.2 已装并固定（scripts/check_env.sh）；仅作媒体规范化工具：argv 调用、超时、大小限制、错误码，业务逻辑不绑死 shell 命令"
+  ],
   "notes": [
     "所有测试均为合成信号/内存夹具（synthetic）；无真实私密音频进入本仓任何测试",
     "重模型 provider 全部未安装，/v1/capabilities 如实报 not_configured",

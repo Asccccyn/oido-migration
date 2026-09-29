@@ -7,6 +7,7 @@ import json
 import sqlite3
 from typing import Optional
 
+from oido.domain.evidence import sanitize_provider_payload
 from oido.domain.ids import new_id, utc_now_rfc3339
 from oido.domain.states import IllegalTransition, is_terminal_job, job_transition
 
@@ -155,6 +156,11 @@ class AnalysisService:
                 ),
             )
         for ev in evidence or []:
+            # B20 第二道闸：provider 边界净化之外的持久层兜底——
+            # parameters 等嵌套结构里的情绪字段同样不得落库（值与键都不进 payload）
+            ev, dropped = sanitize_provider_payload(ev)
+            if dropped:
+                ev = ev | {"quality_flags": sorted(set(ev.get("quality_flags", [])) | {"sanitized_at_persistence"})}
             self.conn.execute(
                 """INSERT INTO evidence_items
                    (evidence_id, analysis_id, revision, kind, feature, payload, created_at)
