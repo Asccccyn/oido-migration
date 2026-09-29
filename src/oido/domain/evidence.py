@@ -29,8 +29,20 @@ ALLOWED_SOUND_EVENTS = (
     "other_audible",
 )
 
-# 禁用词根：任何命中即视为情绪分类，边界处丢弃（B20 测试覆盖）
-_FORBIDDEN_KEY_STEMS = ("emotion", "mood", "affect", "sentiment", "feeling")
+# 禁用词根：首个 token 以任一词根开头即视为情绪分类，边界处丢弃（B20 测试覆盖）
+# 2026-09-29 自审计加固：valence/arousal（情效维度）也是情绪推断；
+# 前缀匹配堵住 emotional/emotions/affective 等变形。
+_FORBIDDEN_KEY_STEMS = (
+    "emotion", "mood", "affect", "sentiment", "feeling",
+    "valence", "arousal",
+)
+# 情绪词直接当键名（provider 常见 {"happy": 0.9} 形态）
+_EMOTION_WORD_KEYS = {
+    "happy", "sad", "angry", "neutral", "anxious", "calm", "excited",
+    "excitement", "surprised", "surprise", "fearful", "fear", "disgusted",
+    "disgust", "joy", "joyful", "cheerful", "upset", "stressed", "annoyed",
+    "teasing", "sleepy", "warm",
+}
 # 已知 provider 情绪取值（含 Siren SIREN_EMOTIONS 的交集），仅用于日志计数，绝不落值
 _EMOTION_VALUE_SAMPLES = {
     "sad", "happy", "angry", "neutral", "anxious", "calm", "excited",
@@ -43,15 +55,16 @@ class EvidenceValidationError(ValueError):
 
 
 def is_emotion_key(key: str) -> bool:
-    stem = key.lower().split("_")[0]
-    return stem in _FORBIDDEN_KEY_STEMS
+    token = key.lower().split("_")[0]
+    return token.startswith(_FORBIDDEN_KEY_STEMS) or token in _EMOTION_WORD_KEYS
 
 
 def sanitize_provider_payload(payload: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
-    """provider 边界净化：剥离情绪分类字段。
+    """provider 边界净化：剥离情绪分类字段（键名命中 / 情绪词当键 / 独立情绪词值）。
 
     返回 (净化后的浅拷贝, 被丢弃的字段名列表)。丢弃只计数/记名，
     永不保存被丢弃的值（B20：DB/API/MCP/log 均不得出现该字段值）。
+    长文本值不做匹配（转写正文里的"happy birthday"不受影响）。
     """
     cleaned: dict[str, Any] = {}
     dropped: list[str] = []
@@ -63,6 +76,8 @@ def sanitize_provider_payload(payload: dict[str, Any]) -> tuple[dict[str, Any], 
             sub, sub_dropped = sanitize_provider_payload(value)
             cleaned[key] = sub
             dropped.extend(f"{key}.{k}" for k in sub_dropped)
+        elif isinstance(value, str) and value.strip().lower() in _EMOTION_VALUE_SAMPLES:
+            dropped.append(key)          # 值本身是独立情绪词 → 整字段丢弃
         else:
             cleaned[key] = value
     return cleaned, dropped

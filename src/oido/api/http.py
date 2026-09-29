@@ -39,9 +39,8 @@ def create_app(config: OidoConfig | None = None, conn: sqlite3.Connection | None
                 db_ok = True
             except sqlite3.Error:
                 db_ok = False
-        # 重模型缺席可降级：ready 只反映可服务性，不要求全 provider 在位
-        ready_ok = db_ok or _state["conn"] is None
-        return {"status": "ready" if ready_ok else "degraded", "db": db_ok,
+        # 没挂存储就是 degraded，不放水（自审计勘误：此前 conn 为 None 也报 ready）
+        return {"status": "ready" if db_ok else "degraded", "db": db_ok,
                 "flags": cfg.flags}
 
     @app.get("/v1/capabilities")

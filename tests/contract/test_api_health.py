@@ -26,8 +26,13 @@ class TestHealth:
         r = client.get("/health/ready")
         assert r.status_code == 200
         body = r.json()
-        assert body["status"] in ("ready", "degraded")
-        assert body["db"] is True
+        assert body["status"] == "ready" and body["db"] is True
+
+    def test_ready_without_storage_is_degraded(self, tmp_path):
+        # 自审计勘误锚定：没挂存储必须 degraded，不得报 ready
+        app = create_app(config=OidoConfig(data_root=tmp_path), conn=None)
+        body = TestClient(app).get("/health/ready").json()
+        assert body["status"] == "degraded" and body["db"] is False
 
     def test_live_leaks_nothing(self, client):
         # EXEC §4.1：不返回密钥、路径、模型库清单

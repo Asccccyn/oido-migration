@@ -58,6 +58,7 @@ oído 侧对应决定（已在本仓实施）：`oido_analyze` 等工具**不接
 - node v22.23.3（estómago viewer 未来可用）
 - `uv` **未安装**：按 EXEC §1"只选一种管理方式"，采用 **venv + pip + requirements.lock（freeze 全量锁定）**
 - `ffmpeg` **未安装**：WP02 媒体探测/解码子进程需要；届时单独提请安装批准（或评估纯 Python 解码范围：wav/flac/ogg 走 libsndfile，mp3/m4a 明确 `unsupported`）。**当前为 WP02 blocker，如实登记，不假装可用。**
+  - **2026-09-29 更新**：经宿主用户批准已安装 **ffmpeg 9.0.2**，版本固定进 `scripts/check_env.sh`；本条 blocker 解除（裁定记录见 `REVIEW_20260929.md`）。
 - `~/Projects/oido`、`~/Data/oido` 均无冲突（新建）
 
 ## 5. 依赖锁定（首次）

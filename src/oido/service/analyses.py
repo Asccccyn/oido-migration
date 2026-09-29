@@ -100,13 +100,17 @@ class AnalysisService:
         expires = (
             datetime.now(timezone.utc) + timedelta(seconds=lease_seconds)
         ).isoformat(timespec="milliseconds").replace("+00:00", "Z")
-        self.conn.execute(
+        cur = self.conn.execute(
             """UPDATE analysis_runs
                SET status = ?, lease_owner = ?, lease_expires_at = ?, fencing_token = ?,
                    updated_at = ?
                WHERE analysis_id = ? AND fencing_token = ?""",
             (status_to, worker, expires, token, now, analysis_id, row["fencing_token"]),
         )
+        if cur.rowcount != 1:
+            # CAS 失败：另一个 worker 抢先（自审计勘误：此前仍返回租约，造成假授予）
+            self.conn.rollback()
+            return None
         self.conn.commit()
         return {"analysis_id": analysis_id, "fencing_token": token, "lease_expires_at": expires}
 

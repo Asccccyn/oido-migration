@@ -40,6 +40,32 @@ class TestEmotionBoundary:
             cleaned, _ = sanitize_provider_payload({"emotion": value, "ok": 1})
             assert value not in json.dumps(cleaned)
 
+    def test_audit_20260929_variants_blocked(self):
+        """自审计勘误：这些变体曾全部穿透，必须全部拦下。"""
+        cases = [
+            {"valence": -0.7, "arousal": 0.4, "text": "x"},   # 情效维度
+            {"happy": 0.9, "sad": 0.1},                        # 情绪词当键
+            {"emotional": True, "emotions": {"sad": 0.8}},     # 前缀变形
+            {"excitement": 0.7, "affective": 0.3},             # 近义/前缀
+            {"label": "happy"},                                # 值是独立情绪词
+        ]
+        for payload in cases:
+            cleaned, dropped = sanitize_provider_payload(payload)
+            blob = json.dumps(cleaned)
+            for word in ("valence", "arousal", "happy", "sad", "emotional",
+                         "emotions", "excitement", "affective", "label"):
+                if word in payload:
+                    assert word not in blob, f"{payload} leaked {word!r}"
+            assert dropped, f"{payload} should have drops"
+
+    def test_long_text_values_not_matched(self):
+        # 长文本值里的情绪词是正常内容，不得误杀（"happy birthday" 在转写里）
+        cleaned, dropped = sanitize_provider_payload(
+            {"text": "they said happy birthday to her", "event": "laugh_like"}
+        )
+        assert cleaned == {"text": "they said happy birthday to her", "event": "laugh_like"}
+        assert dropped == []
+
     def test_emotion_feature_rejected_at_validation(self):
         with pytest.raises(EvidenceValidationError):
             validate_evidence({

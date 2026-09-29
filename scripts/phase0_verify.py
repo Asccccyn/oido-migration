@@ -33,14 +33,18 @@ def main() -> None:
     raw = args.answer if args.answer is not None else Path(args.answer_file).read_text()
     expected = normalize((SECRETS / f"{args.entry}.txt").read_text())
     got = normalize(raw)
-    if len(got) != len(expected):
-        print(f"RESULT=LENGTH_MISMATCH entry={args.entry} got_len={len(got)} expected_len={len(expected)}")
-        return
-    diff = [i for i, (a, b) in enumerate(zip(got, expected)) if a != b]
-    if diff:
-        print(f"RESULT=MISMATCH entry={args.entry} wrong_positions={diff}")
+    if len(got) == len(expected):
+        diff = [i for i, (a, b) in enumerate(zip(got, expected)) if a != b]
+        if diff:
+            print(f"RESULT=MISMATCH entry={args.entry} wrong_positions={diff}")
+        else:
+            print(f"RESULT=MATCH entry={args.entry}")
+    elif expected in got:
+        # 模型常带说明文字（"随机码是：XXXXXX"）——码完整在内即运输成功，
+        # 记为 CONTAINS 以区别于逐字复述（协议矩阵两列分别记录）
+        print(f"RESULT=CONTAINS entry={args.entry} extra_chars={len(got) - len(expected)}")
     else:
-        print(f"RESULT=MATCH entry={args.entry}")
+        print(f"RESULT=LENGTH_MISMATCH entry={args.entry} got_len={len(got)} expected_len={len(expected)}")
 
 
 if __name__ == "__main__":
