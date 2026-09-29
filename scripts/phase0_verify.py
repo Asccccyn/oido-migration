@@ -19,7 +19,19 @@ SECRETS = ROOT / "evals" / "phase0" / "secrets"
 
 
 def normalize(s: str) -> str:
-    return re.sub(r"[^0-9A-Za-z]", "", s).upper()
+    # 只剥分隔/标点，保留任何文字（含中文说明）——"随机码是：AB3D9K"
+    # 必须判 CONTAINS 而非误判逐字复述 MATCH
+    return re.sub(r"[^\w]", "", s, flags=re.UNICODE).upper()
+
+
+def judge(expected: str, got: str) -> str:
+    """AUD-5：区分 MATCH（逐字复述）/ CONTAINS（码在说明文字内）/ 失败两态。"""
+    if len(got) == len(expected):
+        diff = [i for i, (a, b) in enumerate(zip(got, expected)) if a != b]
+        return "MISMATCH" if diff else "MATCH"
+    if expected in got:
+        return "CONTAINS"
+    return "LENGTH_MISMATCH"
 
 
 def main() -> None:
@@ -32,19 +44,13 @@ def main() -> None:
 
     raw = args.answer if args.answer is not None else Path(args.answer_file).read_text()
     expected = normalize((SECRETS / f"{args.entry}.txt").read_text())
-    got = normalize(raw)
-    if len(got) == len(expected):
-        diff = [i for i, (a, b) in enumerate(zip(got, expected)) if a != b]
-        if diff:
-            print(f"RESULT=MISMATCH entry={args.entry} wrong_positions={diff}")
-        else:
-            print(f"RESULT=MATCH entry={args.entry}")
-    elif expected in got:
-        # 模型常带说明文字（"随机码是：XXXXXX"）——码完整在内即运输成功，
-        # 记为 CONTAINS 以区别于逐字复述（协议矩阵两列分别记录）
-        print(f"RESULT=CONTAINS entry={args.entry} extra_chars={len(got) - len(expected)}")
+    result = judge(expected, normalize(raw))
+    if result == "MATCH":
+        print(f"RESULT=MATCH entry={args.entry}")
+    elif result == "CONTAINS":
+        print(f"RESULT=CONTAINS entry={args.entry}")
     else:
-        print(f"RESULT=LENGTH_MISMATCH entry={args.entry} got_len={len(got)} expected_len={len(expected)}")
+        print(f"RESULT={result} entry={args.entry}")
 
 
 if __name__ == "__main__":

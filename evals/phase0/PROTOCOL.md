@@ -46,17 +46,14 @@
 
 ### claude_code（需先装 CLI + 登录，等批准）
 
-**防作弊边界（自审计加固）**：CLI 主体与 secrets 同机同用户，0600 挡不住 owner——
-必须在**临时目录**运行并**禁用全部工具**，使其只能经图片附件通道获知随机码（E04 本意）。
+**防作弊边界（AUD-4，已脚本化）**：CLI 主体与 secrets 同机同用户，0600 挡不住 owner——
+`scripts/phase0_run_claude_code.sh` 强制"临时目录 + 禁全部工具 + 只喂图"，
+随机码只能经图片通道进入（E04 本意）。装好 CLI 并登录后一条命令执行：
 
 ```bash
 npm install -g @anthropic-ai/claude-code   # 需宿主用户批准后执行
 claude                                      # 首次登录（她本人操作）
-mkdir -p /tmp/oido-phase0-code && cp ~/Projects/oido/evals/phase0/fixtures/claude_code.png /tmp/oido-phase0-code/
-cd /tmp/oido-phase0-code
-claude -p "这是一张随机码测试图。请只输出图中显示的随机码，逐字符原样复述，不要添加其他内容。" \
-  --allowedTools "" claude_code.png \
-  > ~/Projects/oido/evals/phase0/answers/claude_code.raw.txt
+cd ~/Projects/oido && bash scripts/phase0_run_claude_code.sh
 ```
 
 estómago 探针已内置同等约束（`allowedTools: []` + `settingSources: []`）。
