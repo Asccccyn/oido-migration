@@ -1,0 +1,62 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "oido:mcp-tools.v1",
+  "title": "“我只听你”六个 MCP 工具（ARCH §9，v0.1 合同冻结）",
+  "toolset_display_name": "我只听你",
+  "tools": [
+    {
+      "name": "oido_capabilities",
+      "description": "当前 provider/能力/限制与版本；只读，不暴露凭据",
+      "input": {"type": "object", "properties": {"capability": {"type": "string"}}, "additionalProperties": false},
+      "output": "capabilities json",
+      "side_effects": "none"
+    },
+    {
+      "name": "oido_analyze",
+      "description": "对已登记 audio_id 创建幂等分析任务；不接受 URL 或本机路径",
+      "input": {
+        "type": "object",
+        "required": ["audio_id"],
+        "properties": {
+          "audio_id": {"type": "string", "pattern": "^aud_"},
+          "profile": {"enum": ["full_evidence", "conversation_fast", "inspect_range"]},
+          "range": {"type": "object"},
+          "idempotency_key": {"type": "string"}
+        },
+        "additionalProperties": false,
+        "not": {"anyOf": [{"required": ["url"]}, {"required": ["path"]}]}
+      },
+      "output": "analysis_id + status",
+      "side_effects": "creates_analysis_job"
+    },
+    {
+      "name": "oido_get",
+      "description": "概览/证据/缺失能力；默认输出文字韵律谱，不含图片",
+      "input": {"type": "object", "required": ["analysis_id"], "properties": {"analysis_id": {"type": "string"}, "revision": {"type": "integer"}, "detail": {"type": "string"}, "cursor": {"type": "string"}}, "additionalProperties": false},
+      "output": "compact evidence + expandable views",
+      "side_effects": "none"
+    },
+    {
+      "name": "oido_view",
+      "description": "真实数值渲染的图像内容（TextContent + ImageContent）；Phase 0 未通过的宿主不得默认调用",
+      "input": {"type": "object", "required": ["analysis_id", "view"], "properties": {"analysis_id": {"type": "string"}, "revision": {"type": "integer"}, "view": {"enum": ["overview", "waveform", "spectrogram", "pitch", "energy"]}, "range": {"type": "object"}}, "additionalProperties": false},
+      "output": "image content + metadata",
+      "side_effects": "bounded_render"
+    },
+    {
+      "name": "oido_find",
+      "description": "在指定音频/允许范围内找话；不因一句“找找”扩大到全库",
+      "input": {"type": "object", "required": ["audio_id", "query"], "properties": {"audio_id": {"type": "string"}, "query": {"type": "string"}, "mode": {"type": "string"}, "limit": {"type": "integer", "maximum": 10}}, "additionalProperties": false},
+      "output": "有限候选区间（默认 3）",
+      "side_effects": "none"
+    },
+    {
+      "name": "oido_compare",
+      "description": "两个具体资产/区间的可比较量差异；不输出情绪结论；无基线时拒绝“比平时”表述",
+      "input": {"type": "object", "required": ["left", "right"], "properties": {"left": {"type": "object"}, "right": {"type": "object"}, "metrics": {"type": "array", "items": {"type": "string"}}}, "additionalProperties": false},
+      "output": "可比性 + 差异 + 限制",
+      "side_effects": "none"
+    }
+  ],
+  "$comment": "工具不提供任意本机路径/任意 URL 参数（WP00 §3：URL 抓取只留在 Siren 边界）"
+}

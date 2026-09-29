@@ -1,0 +1,77 @@
+{
+  "schema_version": "oido.acceptance.v1",
+  "architecture_version": "OIDO-ARCH-1.1",
+  "execution_version": "OIDO-EXEC-1.1",
+  "decision_record": "docs/pack/AUDITORY_DECISIONS.md",
+  "implementation_commit": null,
+  "working_tree_manifest": "docs/WP00_BASELINE.md",
+  "overall_status": "partial",
+  "overall_status_note": "WP00 完成；WP01/WP03(P0 部分) 代码与测试落地。绝大多数能力未开始，见 capabilities。不得据此宣布产品可用。",
+  "capabilities": [
+    {"id": "C01", "status": "partial", "tests": ["tests/contract/test_analysis_job.py"], "blockers": ["Siren 受信导入(WP10)未接", "媒体探测子进程(WP02)未实现，ffmpeg 未安装"]},
+    {"id": "C02", "status": "not_run", "tests": [], "blockers": ["WP03 波形包络未实现"]},
+    {"id": "C03", "status": "not_run", "tests": [], "blockers": ["WP03 STFT/Mel 未实现"]},
+    {"id": "C04", "status": "partial", "tests": ["tests/unit/test_f0_explicit_sr.py", "tests/unit/test_rms.py", "tests/unit/test_pitch.py"], "blockers": ["MFCC/频谱描述量未实现", "真实音频端到端未跑"]},
+    {"id": "C05", "status": "not_run", "tests": [], "blockers": ["WP04 未开始；openSMILE 许可未定"]},
+    {"id": "C06", "status": "not_run", "tests": [], "blockers": ["WP05 未开始；ASR provider 未装"]},
+    {"id": "C07", "status": "not_run", "tests": [], "blockers": ["WP05 未开始"]},
+    {"id": "C08", "status": "not_run", "tests": [], "blockers": ["WP06 未开始；事件模型未装"]},
+    {"id": "C09", "status": "not_run", "tests": [], "blockers": ["WP06 未开始"]},
+    {"id": "C10", "status": "not_run", "tests": [], "blockers": ["WP06/WP11 未开始"]},
+    {"id": "C11", "status": "not_run", "tests": [], "blockers": ["WP07 未开始；CLAP 未装"]},
+    {"id": "C12", "status": "not_run", "tests": [], "blockers": ["WP07 未开始；DAC 未装"]},
+    {"id": "C13", "status": "not_run", "tests": ["tests/security/test_no_url_ingress.py"], "blockers": ["文字韵律谱生成(WP05)、渲染器与查看器(WP08)、MCP 服务器(WP09)未实现；合同已冻结"]},
+    {"id": "C14", "status": "not_run", "tests": [], "blockers": ["WP11 未开始"]},
+    {"id": "C15", "status": "partial", "tests": ["tests/contract/test_api_health.py"], "blockers": ["MCP 入口未实现；认证适配器未实现（当前 API 未对外监听）"]},
+    {"id": "C16", "status": "not_run", "tests": [], "blockers": ["WP12 未开始；Mariposa 对端能力未核验"]}
+  ],
+  "acceptance_matrix": {
+    "A01": {"status": "pass", "evidence": "tests/unit/test_f0_explicit_sr.py::TestA01FrequencyAndTimeAcrossSampleRates (16/24/44.1/48 kHz, Hz≤2% 且 onset 定位同时校验)"},
+    "A02": {"status": "pass", "evidence": "tests/unit/test_rms.py::test_a02_halving_is_minus_6_0206_db"},
+    "A03": {"status": "pass", "evidence": "tests/unit/test_rms.py::test_a03_zeros_below_floor_not_fake_zero_dbfs + f0 无伪造"},
+    "A04": {"status": "partial", "evidence": "tests/unit/test_timebase.py（纯数学层）；媒体文件主视图映射待 WP02"},
+    "A05": {"status": "not_run"},
+    "A06": {"status": "not_run"},
+    "A07": {"status": "not_run"},
+    "A08": {"status": "not_run"},
+    "A09": {"status": "not_run", "note": "对象原子写+hash 已测(test_atomic_objects)；MP3/Opus 原字节保留待 WP02"},
+    "A10": {"status": "partial", "evidence": "tests/unit/test_timebase.py::test_roundtrip_no_drift（有理映射）；重采样器未实现"},
+    "A11": {"status": "not_run"},
+    "A12": {"status": "not_run"},
+    "A13": {"status": "not_run"},
+    "A14": {"status": "not_run"},
+    "B16": {"status": "not_run"},
+    "B17": {"status": "partial", "evidence": "tests/unit/test_pitch.py（字内/句级字段分离的数学层）；真实对齐未实现"},
+    "B20": {"status": "pass", "evidence": "tests/unit/test_evidence.py::TestEmotionBoundary（扁平/嵌套/六类情绪值零泄漏）"},
+    "E07": {"status": "pass", "evidence": "tests/contract/test_analysis_job.py::TestVisibility（存在性统一口径）"},
+    "E08": {"status": "partial", "evidence": "tests/security/test_no_url_ingress.py（工具合同无 url/path）+ test_atomic_objects 路径穿越拒绝；服务面待 WP02"},
+    "E11": {"status": "pass", "evidence": "tests/contract/test_analysis_job.py::TestIdempotencyE11"},
+    "E12": {"status": "pass", "evidence": "tests/contract/test_analysis_job.py::TestFencingE12（stale_fence + 终态不复活 + 取消幂等）"},
+    "other": "not_run"
+  },
+  "hosts": [
+    {"host": "claude_web", "client_version": null, "status": "not_run"},
+    {"host": "claude_ios", "client_version": null, "status": "not_run"},
+    {"host": "claude_code", "client_version": null, "status": "not_run"},
+    {"host": "estomago", "client_version": "0.2.2 (SDK 0.3.283)", "status": "not_run"}
+  ],
+  "test_runs": [
+    {"command": ".venv/bin/python scripts/supervise_tests.py --timeout-seconds 180 --rss-limit-mib 1024 -- .venv/bin/python -m pytest -x -q tests/unit/test_timebase.py tests/unit/test_pitch.py tests/unit/test_states.py tests/unit/test_evidence.py tests/unit/test_rms.py", "result": "57 passed, exit 0"},
+    {"command": ".venv/bin/python scripts/supervise_tests.py --timeout-seconds 300 --rss-limit-mib 2048 -- .venv/bin/python -m pytest -q tests/unit/test_f0_explicit_sr.py", "result": "8 passed, exit 0（含 numba 冷启动）"},
+    {"command": ".venv/bin/python scripts/supervise_tests.py --timeout-seconds 300 --rss-limit-mib 2048 -- .venv/bin/python -m pytest tests/", "result": "90 passed 1 warning in 1.38s, supervised-exit 0（全量总验收，2026-09-29）"},
+    {"command": ".venv/bin/python scripts/supervise_tests.py --self-test", "result": "exit-code/timeout-kill/rss-kill/tree-kill 四项 OK"}
+  ],
+  "siren_ssrf_audit": {
+    "status": "done",
+    "report": "docs/WP00_BASELINE.md §3",
+    "findings": ["S-GAP-1 DNS rebinding TOCTOU（校验与 fetch 双解析，未钉 IP）P1", "S-GAP-2 下载总时长无整体 deadline P3"],
+    "oido_side_control": "工具合同不接受 URL/路径（tests/security/test_no_url_ingress.py）"
+  },
+  "new_cloud_audio_inference": "forbidden",
+  "production_changes": [],
+  "notes": [
+    "所有测试均为合成信号/内存夹具（synthetic）；无真实私密音频进入本仓任何测试",
+    "重模型 provider 全部未安装，/v1/capabilities 如实报 not_configured",
+    "本文件由 GLM 于 2026-09-29 生成；implementation_commit 在提交后回填"
+  ]
+}

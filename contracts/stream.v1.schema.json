@@ -1,0 +1,37 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "oido:stream.v1",
+  "title": "实时流媒体块与控制帧（EXEC WP11，v0.1 仅合同）",
+  "type": "object",
+  "oneOf": [{"$ref": "#/$defs/media_chunk"}, {"$ref": "#/$defs/control_frame"}],
+  "$defs": {
+    "media_chunk": {
+      "type": "object",
+      "required": ["type", "stream_id", "seq", "start_sample", "sample_count", "track"],
+      "properties": {
+        "type": {"const": "media"},
+        "stream_id": {"type": "string"},
+        "seq": {"type": "integer", "minimum": 0},
+        "start_sample": {"type": "integer", "minimum": 0},
+        "sample_count": {"type": "integer", "minimum": 1},
+        "track": {"enum": ["upstream", "downstream"]},
+        "codec": {"const": "pcm_s16le"},
+        "sample_rate_hz": {"type": "integer"},
+        "channels": {"const": 1},
+        "payload_base64": {"type": "string"},
+        "$comment": "丢块=gap，不是静音；gap 跨越的指标不得当连续观测（EXEC §3.4）"
+      }
+    },
+    "control_frame": {
+      "type": "object",
+      "required": ["type", "stream_id"],
+      "properties": {
+        "type": {"enum": ["open", "ack", "gap_report", "drain", "finalize", "abort"]},
+        "stream_id": {"type": "string"},
+        "last_seq": {"type": "integer"},
+        "expected_sample_count": {"type": "integer"},
+        "reason": {"type": "string"}
+      }
+    }
+  }
+}

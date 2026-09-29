@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "oido:audio.v1",
+  "title": "音频资产登记（ARCH §6.1）",
+  "type": "object",
+  "required": ["audio_id", "owner", "source_kind", "sha256", "bytes", "lifecycle", "retention", "created_at"],
+  "properties": {
+    "audio_id": {"type": "string", "pattern": "^aud_"},
+    "owner": {"type": "string"},
+    "scope": {"type": "string", "default": "private"},
+    "source_kind": {"enum": ["user_upload", "assistant_tts", "external_import"]},
+    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "bytes": {"type": "integer", "minimum": 1},
+    "media_mime": {"type": ["string", "null"]},
+    "sample_rate_hz": {"type": ["integer", "null"]},
+    "channels": {"type": ["integer", "null"]},
+    "lifecycle": {"enum": ["active", "deletion_requested", "tombstoned", "purged"]},
+    "retention": {"enum": ["standard", "temporary"]},
+    "origin": {
+      "type": ["object", "null"],
+      "properties": {
+        "kind": {"enum": ["siren_voice_message", "direct_upload", "external"]},
+        "external_id": {"type": ["string", "null"]},
+        "voice_profile_id": {"type": ["string", "null"]},
+        "voice_profile_version": {"type": ["string", "null"]},
+        "provider_model_revision": {"type": ["string", "null"]}
+      }
+    },
+    "created_at": {"type": "string", "format": "date-time"}
+  },
+  "$comment": "assistant_tts 必须带 voice_profile_id+version（D02）；temporary(store=false) 不得升级为 standard（§12.3）"
+}

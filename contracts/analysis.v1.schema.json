@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "oido:analysis.v1",
+  "title": "分析运行结果（EXEC §3.2/§6.3 结果对象）",
+  "type": "object",
+  "required": ["schema_version", "analysis_id", "audio_id", "status", "profile", "revision"],
+  "properties": {
+    "schema_version": {"const": "oido.v1"},
+    "analysis_id": {"type": "string", "pattern": "^run_"},
+    "audio_id": {"type": "string"},
+    "profile": {"enum": ["full_evidence", "conversation_fast", "inspect_range"]},
+    "status": {"enum": ["queued", "running", "succeeded", "partial", "failed", "cancelled"]},
+    "revision": {"type": "integer", "minimum": 0},
+    "stages": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["capability", "status"],
+        "properties": {
+          "capability": {"type": "string"},
+          "status": {"enum": ["pending", "running", "succeeded", "partial", "failed", "skipped"]},
+          "reason_code": {
+            "enum": ["policy_denied", "provider_not_configured", "unsupported", "insufficient_signal",
+                     "unsupported_language", "alignment_failed", "resource_exhausted", "deadline_exceeded",
+                     "invalid_media", "source_unavailable", "input_gap", "dependency_failed",
+                     "client_transport_unverified"]
+          },
+          "detail": {}
+        }
+      }
+    },
+    "warnings": {"type": "array", "items": {"type": "string"}}
+  },
+  "$comment": "succeeded 只表示本次 profile 的适用能力完成（EXEC §3.2）；partial 必须带缺失能力与原因"
+}

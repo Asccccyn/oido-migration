@@ -1,0 +1,28 @@
+[project]
+name = "oido"
+version = "0.1.0"
+description = "oído · 声音证据服务（Claude 工具组显示名：我只听你）。证据给我，意思我自己听。"
+requires-python = ">=3.12"
+dependencies = [
+    "numpy",
+    "scipy",
+    "librosa",
+    "soundfile",
+    "fastapi",
+    "uvicorn",
+    "jsonschema",
+]
+
+[project.optional-dependencies]
+dev = ["pytest", "httpx"]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
