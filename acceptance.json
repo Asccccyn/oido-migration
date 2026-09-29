@@ -3,7 +3,7 @@
   "architecture_version": "OIDO-ARCH-1.1",
   "execution_version": "OIDO-EXEC-1.1",
   "decision_record": "docs/pack/AUDITORY_DECISIONS.md",
-  "implementation_commit": null,
+  "implementation_commit": "ca1aba6c0da070b9875b1e970e9e0e8528d817ef (wp01-wp03-foundation)",
   "working_tree_manifest": "docs/WP00_BASELINE.md",
   "overall_status": "partial",
   "overall_status_note": "WP00 完成；WP01/WP03(P0 部分) 代码与测试落地。绝大多数能力未开始，见 capabilities。不得据此宣布产品可用。",
