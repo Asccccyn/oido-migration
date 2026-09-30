@@ -58,13 +58,19 @@ cd ~/Projects/oido && bash scripts/phase0_run_claude_code.sh
 
 estómago 探针已内置同等约束（`allowedTools: []` + `settingSources: []`）。
 
-### estomago（探针已武装，等认证环境）
+### estomago（探针已武装；在她已登录的普通终端里跑）
+
+**凭据铁律（宿主用户 2026-09-29 裁定）**：不为测试复制任何登录信息——`~/.claude`、
+API key、钥匙串一律不搬进 oído。探针零凭据搬运，认证只来自运行环境的既有登录态；
+环境没登录就保持 BLOCKED，不搬凭据换绿灯。oído 是插件，不拥有自己的登录身份。
 
 ```bash
-OIDO_PHASE0_AUTHORIZED=1 node scripts/phase0_probe_estomago.mjs
+cd ~/Projects/oido && OIDO_PHASE0_AUTHORIZED=1 node scripts/phase0_probe_estomago.mjs
 ```
 
-（在具备 Claude 认证的环境由宿主用户执行；临时 ESTOMAGO_HOME、无身份加载、真实 SDK 调用。）
+在宿主用户本人已登录的终端执行即可（无需任何配置动作）。临时 ESTOMAGO_HOME 隔离
+estómago 生产数据；`settingSources: []` 关闭人格加载——只测一件事：
+**图片有没有真的传进模型**。
 
 ## 校验（所有入口同法）
 

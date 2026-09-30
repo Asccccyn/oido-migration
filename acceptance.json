@@ -57,7 +57,7 @@
     {"host": "claude_code", "client_version": null, "status": "blocked",
      "note": "本机未装 claude CLI；安装+登录待宿主用户批准（REVIEW 裁定 1 已批测试本身）"},
     {"host": "estomago", "client_version": "0.2.2 (SDK 0.3.283)", "status": "blocked",
-     "note": "探针已武装并自检（scripts/phase0_probe_estomago.mjs，临时 home/无身份/授权门/SDK 解析验证通过）；本 shell 无 Claude 认证环境，待宿主用户在授权环境执行"}
+     "note": "探针就绪（临时 home/无身份/授权门/SDK 解析验证通过）。按宿主用户裁定：在她已登录的普通终端执行即可，零凭据搬运；环境未登录则保持 BLOCKED，不搬凭据换绿灯"}
   ],
   "phase0": {
     "protocol": "evals/phase0/PROTOCOL.md",

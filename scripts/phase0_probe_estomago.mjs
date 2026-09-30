@@ -4,14 +4,18 @@
 // 目的：证明 estómago 所用的 claude-agent-sdk 能把 PNG image block 真实送达
 // 模型并拿到"模型读到的随机码"。这是宿主运输测试，不是人格测试：
 //   - 使用独立临时 ESTOMAGO_HOME（绝不指向生产 ~/Library/Application Support/estomago）
-//   - 不加载任何身份文件 → SDK 会话无char人格（符合其 AGENTS.md：身份缺失=IDENTITY_BLOCKED）
-//   - 只有当 OIDO_PHASE0_AUTHORIZED=1 且本进程能解析到 SDK 时才发起真实调用
-//     （对应 estómago 自身 ESTOMAGO_REAL_PROBE 的用户显式授权纪律）
-//   - 模型原始回答写入 evals/phase0/answers/estomago.raw.txt（gitignore），
-//     不回显到 stdout；校验用 phase0_verify.py（只输出 MATCH/MISMATCH）
+//   - 不加载任何身份文件（settingSources: []）→ SDK 会话无char人格
+//   - 只有当 OIDO_PHASE0_AUTHORIZED=1 时才发起真实调用（用户显式授权纪律）
 //
-// 运行（需已具备 Claude 认证环境，由宿主用户本人配置）：
-//   OIDO_PHASE0_AUTHORIZED=1 node scripts/phase0_probe_estomago.mjs
+// 凭据铁律（宿主用户 2026-09-29 裁定）：
+//   本脚本**零凭据搬运**——不读、不复制、不引用任何登录信息（~/.claude、
+//   API key、钥匙串一律不碰）。认证完全来自运行时所在环境的既有登录态：
+//   在哪个已登录的环境里跑，就用哪个环境的身份；环境没登录就让它 BLOCKED，
+//   不为了让测试变绿而搬运凭据。临时 ESTOMAGO_HOME 只是状态隔离，
+//   不是"把凭据复制进来"的通道。
+//
+// 运行（在宿主用户本人已登录的普通终端里，无需任何额外配置）：
+//   cd ~/Projects/oido && OIDO_PHASE0_AUTHORIZED=1 node scripts/phase0_probe_estomago.mjs
 //   .venv/bin/python scripts/phase0_verify.py --entry estomago \
 //       --answer-file evals/phase0/answers/estomago.raw.txt
 
