@@ -54,17 +54,25 @@ class EvidenceValidationError(ValueError):
     pass
 
 
+# 文本承载键：值里的单词是"人说的话/写的描述"，不做情绪词匹配
+# （审计补充点7：{"text":"happy"} 是合法转写，不得误删）
+_TEXT_BEARING_KEYS = {
+    "text", "transcript", "caption", "description", "script", "content", "title", "note",
+}
+
+
 def is_emotion_key(key: str) -> bool:
     token = key.lower().split("_")[0]
     return token.startswith(_FORBIDDEN_KEY_STEMS) or token in _EMOTION_WORD_KEYS
 
 
 def sanitize_provider_payload(payload: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
-    """provider 边界净化：剥离情绪分类字段（键名命中 / 情绪词当键 / 独立情绪词值）。
+    """provider 边界净化：剥离情绪分类字段。
 
-    返回 (净化后的浅拷贝, 被丢弃的字段名列表)。丢弃只计数/记名，
-    永不保存被丢弃的值（B20：DB/API/MCP/log 均不得出现该字段值）。
-    长文本值不做匹配（转写正文里的"happy birthday"不受影响）。
+    覆盖：键名命中（含前缀变形）、情绪词当键、独立情绪词值、**任意深度的
+    dict 与 list 容器**（审计 F04a：parameters.events=[...] 也要递归）。
+    文本承载键（text/transcript/...）的值不做匹配，避免误删合法原文。
+    返回 (净化后的浅拷贝, 被丢弃的字段名列表)；丢弃只记名不记值。
     """
     cleaned: dict[str, Any] = {}
     dropped: list[str] = []
@@ -76,11 +84,31 @@ def sanitize_provider_payload(payload: dict[str, Any]) -> tuple[dict[str, Any], 
             sub, sub_dropped = sanitize_provider_payload(value)
             cleaned[key] = sub
             dropped.extend(f"{key}.{k}" for k in sub_dropped)
-        elif isinstance(value, str) and value.strip().lower() in _EMOTION_VALUE_SAMPLES:
+        elif isinstance(value, list):
+            cleaned[key] = _sanitize_list(value, dropped, key)
+        elif (
+            isinstance(value, str)
+            and key.lower() not in _TEXT_BEARING_KEYS
+            and value.strip().lower() in _EMOTION_VALUE_SAMPLES
+        ):
             dropped.append(key)          # 值本身是独立情绪词 → 整字段丢弃
         else:
             cleaned[key] = value
     return cleaned, dropped
+
+
+def _sanitize_list(items: list, dropped: list[str], path: str) -> list:
+    out: list[Any] = []
+    for i, item in enumerate(items):
+        if isinstance(item, dict):
+            sub, sub_dropped = sanitize_provider_payload(item)
+            out.append(sub)
+            dropped.extend(f"{path}[{i}].{k}" for k in sub_dropped)
+        elif isinstance(item, str) and item.strip().lower() in _EMOTION_VALUE_SAMPLES:
+            dropped.append(f"{path}[{i}]")
+        else:
+            out.append(item)
+    return out
 
 
 def check_no_json_nan_inf(value: Any) -> None:
@@ -107,6 +135,13 @@ def validate_evidence(ev: dict[str, Any], *, known_features: Iterable[str] = ())
     rng = ev["range"]
     if not (isinstance(rng, dict) and "start_sample" in rng and "end_sample" in rng):
         raise EvidenceValidationError("range must carry start_sample/end_sample")
+    start, end = rng["start_sample"], rng["end_sample"]
+    # 审计 F06：样本区间必须是整数、非负、起点<终点（bool 是 int 子类，一并排除）
+    for v in (start, end):
+        if isinstance(v, bool) or not isinstance(v, int):
+            raise EvidenceValidationError(f"range bounds must be integers, got {v!r}")
+    if start < 0 or end <= start:
+        raise EvidenceValidationError(f"range must satisfy 0 <= start < end, got [{start}, {end})")
     if ev["kind"] == "measurement":
         if "unit" not in ev:
             raise EvidenceValidationError("measurement requires a unit")

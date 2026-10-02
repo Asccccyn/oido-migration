@@ -13,7 +13,11 @@
 - `voice_list` 真实合同已核（conversation_id/message_id/from/to/limit → serializeAsset），D07 拉取路径无需新造 Siren 工具。
 - 详见 `docs/WP00_BASELINE.md`。
 
-### WP01 合同与骨架（完成，mock 等级：合成夹具 + 内存/临时目录 SQLite）
+### WP01 合同与骨架（**部分**——2026-10-01 林石见独立审计后校准，原"完成"声明撤回）
+
+审计确认的缺口（除已修 bug 外仍未做的）：宿主认证适配与 scope、access_audit 实际写入、
+HTTP/MCP 共用业务入口、心跳/重启恢复、outbox 与业务事务接线及可靠消费、备份恢复演练。
+已落地部分见下，但整体为**部分交付**。
 
 - 仓库 `~/Projects/oido`；Python 3.12.14 + venv + `requirements.lock`（freeze 全量；未装 uv，选择已记录）。
 - 合同：`contracts/`（audio/analysis/evidence/stream/mcp-tools v1 JSON Schema；证据 schema 内嵌情绪字段封禁）。
@@ -36,7 +40,31 @@
 
 ## 2. 测试（全部受监督、前台、小批）
 
-全量 90 passed（1.38s，numba 已热）——明细见 `acceptance.json.test_runs`。**证据等级：全部合成信号/内存夹具；无任何真实音频、无任何生产系统接入。**
+全量 127 passed（含 2026-10-01 审计 12 项缺陷的 20 个回归钉）——明细见 `acceptance.json.test_runs`。**证据等级：全部合成信号/内存夹具；无任何真实音频、无任何生产系统接入。**
+
+## 1.5 2026-10-01 独立审计响应（林石见，基线 2bb86fb）
+
+审计结论"当前只能算基础原型，不能按完整插件验收"——**接受**。12 项缺陷全部修复并有回归钉：
+
+| 项 | 修复 | 回归测试 |
+|---|---|---|
+| F01 复活竞态 | commit/claim 改条件 UPDATE（token+非终态+资产 active 原子校验）；删除递增 fence | TestF01Resurrection×3 |
+| F02 删除意图丢失 | 意图先持久化（deletion_requested+墓碑+取消），对象清理失败保持可重试态 | TestF02DeleteIntent×2 |
+| F03 证据残留 | 删除清 evidence/stages/artifacts 行与对象；分析读取检查资产生命周期 | TestF03EvidenceCleanup |
+| F04 情绪绕过 | 净化递归 list；stage.detail 同净化；持久前 validate_evidence | TestF04F06×2 |
+| F05 半开事务 | 全部多语句写库 try/except 回滚；先验证后副作用 | TestF05 |
+| F06 非法证据入库 | 持久层完整校验；区间整数/非负/有序；JSON allow_nan=False | TestF04F06 |
+| F07 并发幂等裸异常 | IntegrityError→回读比对→去重或 409 | TestF07×2 |
+| F08 请求参数丢失 | request_json 持久化，claim 返回 | TestF08 |
+| F09 探针不发图 | AsyncIterable\<SDKUserMessage\>+image content block（按 SDK d.ts 实测合同） | TestF09F10（静态钉+node --check；真跑待登录环境） |
+| F10 作用域崩溃 | 解析器提升模块作用域 | 同上 |
+| F11 短音频伪 F0 | 80ms 不足信号门，拒答不产数 | TestF11×4 采样率 |
+| F12 空 ready | 迁移非空+关键表齐全才算 ready | TestF12 |
+
+审计指出的**仍然成立、未在本轮修复**的缺口：宿主认证/scope/access_audit 写入、
+transcript_revisions/asset_links/pins 表、temporary 到期清理、feature flags 未被业务调用、
+监督器无磁盘预算、打包未含 migrations/contracts、探针未真实运行。逐项列于
+`acceptance.json.open_gaps`，不装完成。
 
 ## 3. 未完成（不装完成）
 

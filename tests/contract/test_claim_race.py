@@ -32,7 +32,7 @@ class RaceConnection:
                    SET fencing_token = fencing_token + 1, lease_owner = 'winner',
                        lease_expires_at = '2999-01-01T00:00:00.000Z'
                    WHERE analysis_id = ?""",
-                (params[5],),
+                (params[4],),
             )
             self._real.commit()
         return self._real.execute(sql, params)

@@ -32,16 +32,34 @@ def create_app(config: OidoConfig | None = None, conn: sqlite3.Connection | None
 
     @app.get("/health/ready")
     def ready() -> dict:
-        db_ok = False
+        # 审计 F12：迁移非空 + 关键业务表齐全 + 可查询，三者齐备才算 ready
+        required_tables = (
+            "audio_assets", "analysis_runs", "analysis_stages", "evidence_items",
+            "artifacts", "events_outbox", "deletion_tombstones",
+        )
+        db_ok, reason = False, "no_storage"
         if _state["conn"] is not None:
             try:
-                _state["conn"].execute("SELECT 1 FROM schema_migrations LIMIT 1")
-                db_ok = True
-            except sqlite3.Error:
-                db_ok = False
-        # 没挂存储就是 degraded，不放水（自审计勘误：此前 conn 为 None 也报 ready）
+                versions = _state["conn"].execute(
+                    "SELECT version FROM schema_migrations"
+                ).fetchall()
+                if not versions:
+                    reason = "migrations_empty"
+                else:
+                    present = {
+                        r["name"] for r in _state["conn"].execute(
+                            "SELECT name FROM sqlite_master WHERE type = 'table'"
+                        )
+                    }
+                    missing = [t for t in required_tables if t not in present]
+                    if missing:
+                        reason = f"missing_tables:{','.join(missing)}"
+                    else:
+                        db_ok, reason = True, "ok"
+            except sqlite3.Error as exc:
+                reason = f"db_error:{exc.__class__.__name__}"
         return {"status": "ready" if db_ok else "degraded", "db": db_ok,
-                "flags": cfg.flags}
+                "reason": reason, "flags": cfg.flags}
 
     @app.get("/v1/capabilities")
     def caps() -> dict:

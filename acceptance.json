@@ -6,7 +6,7 @@
   "implementation_commit": "基础代码 ca1aba6；评审落地 20eeb9a；自审计修正见 self_audit（wp01-wp03-foundation）",
   "working_tree_manifest": "docs/WP00_BASELINE.md",
   "overall_status": "partial",
-  "overall_status_note": "评审定名：WP00 + WP01 + WP03 的 P0 基础层完成（非首期功能完成——韵律谱/渲染/MCP/真实语音验收未落地）。评审裁定与新增硬规则见 docs/REVIEW_20260929.md。",
+  "overall_status_note": "2026-10-01 林石见独立审计定名：基础原型（非完整插件）。WP00+WP01(部分)+WP03(P0) 数学/DSP与存储任务基础层；审计 12 项缺陷已全修+回归钉（127 测试），但认证/业务HTTP/MCP/韵律谱/真实语音验收未落地，WP01 原'完成'声明已撤回。",
   "capabilities": [
     {"id": "C01", "status": "partial", "tests": ["tests/contract/test_analysis_job.py"], "blockers": ["Siren 受信导入(WP10)未接", "媒体探测子进程(WP02)未实现，ffmpeg 未安装"]},
     {"id": "C02", "status": "not_run", "tests": [], "blockers": ["WP03 波形包络未实现"]},
@@ -41,12 +41,12 @@
     "A13": {"status": "not_run"},
     "A14": {"status": "not_run"},
     "B16": {"status": "not_run"},
-    "B17": {"status": "partial", "evidence": "tests/unit/test_pitch.py（字内/句级字段分离的数学层）；真实对齐未实现"},
-    "B20": {"status": "pass", "evidence": "tests/unit/test_evidence.py::TestEmotionBoundary（扁平/嵌套/六类情绪值零泄漏）+ tests/unit/test_b20_persistence_boundary.py（持久层第二道闸：parameters 嵌套情绪不落库、全表扫描零情绪值）"},
+    "B17": {"status": "partial", "evidence": "tests/unit/test_pitch.py——审计校准：仅半音数学层，无对齐/syllable_contour/phrase_trend 算法", "note": "降级说明：原表述过高"},
+    "B20": {"status": "pass", "evidence": "tests/unit/test_evidence.py + test_b20_persistence_boundary.py + test_audit_20261001_regressions.py::TestF04F06（审计 F04 修复后：list 递归/stage detail/持久前校验三路全堵）"},
     "E07": {"status": "pass", "evidence": "tests/contract/test_analysis_job.py::TestVisibility（存在性统一口径）"},
     "E08": {"status": "partial", "evidence": "tests/security/test_no_url_ingress.py（工具合同无 url/path）+ test_atomic_objects 路径穿越拒绝；服务面待 WP02"},
-    "E11": {"status": "pass", "evidence": "tests/contract/test_analysis_job.py::TestIdempotencyE11"},
-    "E12": {"status": "pass", "evidence": "tests/contract/test_analysis_job.py::TestFencingE12（stale_fence + 终态不复活 + 取消幂等）"},
+    "E11": {"status": "pass", "evidence": "tests/contract/test_analysis_job.py::TestIdempotencyE11 + test_audit_20261001_regressions.py::TestF07（并发注入两连接同/异请求）"},
+    "E12": {"status": "pass", "evidence": "tests/contract/test_analysis_job.py::TestFencingE12 + TestF01Resurrection（取消/删除与提交、认领交错的注入式竞态）"},
     "other": "not_run"
   },
   "hosts": [
@@ -103,6 +103,32 @@
       "ffmpeg 9.0.2 实测在位；93→100 测试受监督全绿"
     ]
   },
+  "audit_20261001_response": {
+    "auditor": "林石见（独立审计，基线 2bb86fb）",
+    "verdict_accepted": "基础原型，不能按完整插件验收；WP01 原'完成'声明撤回",
+    "fixed_with_regressions": [
+      "F01 复活竞态（条件UPDATE原子校验+删除递增fence）→ TestF01Resurrection",
+      "F02 删除意图先持久化+清理失败保持可重试 → TestF02DeleteIntent",
+      "F03 证据/stages/artifacts 清库+读取检查生命周期 → TestF03EvidenceCleanup",
+      "F04 情绪绕过（list递归/stage detail/持久前校验）→ TestF04F06",
+      "F05 失败事务回滚 → TestF05",
+      "F06 非法证据/区间拒收 → TestF04F06",
+      "F07 并发幂等去重/409 → TestF07",
+      "F08 request_json 持久化+claim返回 → TestF08",
+      "F09/F10 探针真发图+作用域 → 静态钉+node --check（真跑待登录环境）",
+      "F11 80ms 不足信号门 → TestF11 四采样率",
+      "F12 空迁移库 degraded → TestF12"
+    ]
+  },
+  "open_gaps": [
+    "宿主认证适配、scope 与 access_audit 实际写入未实现（capabilities 匿名可读；principal 仅为字符串）",
+    "transcript_revisions、asset_links、pins 持久表缺失；temporary 无到期清理；personal_baseline clear/rebuild/导出链路未实现",
+    "feature flags 默认关闭但无业务调用 enabled()；无法证明集成可开关回退",
+    "supervise_tests.py 无磁盘预算；进程组不保证覆盖脱离组的后代",
+    "pyproject 未声明打包 migrations/contracts；新环境构建/迁移升级/备份还原未验证",
+    "C02/C03/C05–C14/C16 无业务实现；C01/C04/C15 局部",
+    "Phase 0 四入口未执行；探针待真实登录环境运行"
+  ],
   "new_cloud_audio_inference": "forbidden",
   "production_changes": [],
   "constraints_from_review_20260929": [

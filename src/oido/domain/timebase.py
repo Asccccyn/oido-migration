@@ -23,6 +23,10 @@ class SampleRange:
     end_sample: int
 
     def __post_init__(self) -> None:
+        # 审计 F06：样本索引必须是整数（bool 除外），小数区间直接非法
+        for v in (self.start_sample, self.end_sample):
+            if isinstance(v, bool) or not isinstance(v, int):
+                raise TimebaseError(f"sample indices must be integers, got {v!r}")
         if self.start_sample < 0 or self.end_sample <= self.start_sample:
             raise TimebaseError(
                 f"invalid half-open range: [{self.start_sample}, {self.end_sample})"
