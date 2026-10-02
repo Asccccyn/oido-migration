@@ -55,7 +55,17 @@ def create_app(config: OidoConfig | None = None, conn: sqlite3.Connection | None
                     if missing:
                         reason = f"missing_tables:{','.join(missing)}"
                     else:
-                        db_ok, reason = True, "ok"
+                        # 迁移完整性代理检查：0002 的 request_json 列必须在位，
+                        # 否则旧库未升级完就会误报 ready（审计 F12 加固）
+                        cols = {
+                            r["name"] for r in _state["conn"].execute(
+                                "PRAGMA table_info(analysis_runs)"
+                            )
+                        }
+                        if "request_json" not in cols:
+                            reason = "migration_incomplete:request_json"
+                        else:
+                            db_ok, reason = True, "ok"
             except sqlite3.Error as exc:
                 reason = f"db_error:{exc.__class__.__name__}"
         return {"status": "ready" if db_ok else "degraded", "db": db_ok,

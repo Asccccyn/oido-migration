@@ -31,5 +31,11 @@
     },
     "warnings": {"type": "array", "items": {"type": "string"}}
   },
-  "$comment": "succeeded 只表示本次 profile 的适用能力完成（EXEC §3.2）；partial 必须带缺失能力与原因"
+  "allOf": [
+    {
+      "if": {"properties": {"status": {"const": "partial"}}},
+      "then": {"required": ["stages"], "properties": {"stages": {"minItems": 1}}}
+    }
+  ],
+  "$comment": "succeeded 只表示本次 profile 的适用能力完成（EXEC §3.2）；partial 必须带 stages 且至少一项（if/then 强约束）"
 }

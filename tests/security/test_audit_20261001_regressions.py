@@ -391,3 +391,61 @@ class TestF09F10ProbeStatic:
     def test_probe_isolated_cwd_and_tools(self):
         src = self.PROBE.read_text()
         assert "tools: []" in src and "cwd: tempHome" in src and "settingSources: []" in src
+
+
+# ── 架构笔记 [P2 合同不成立]：$comment 里的不变量改为可执行约束 ────────
+class TestSchemaExecutableConstraints:
+    CONTRACTS = Path(__file__).resolve().parents[2] / "contracts"
+
+    def _validator(self, name):
+        from jsonschema import Draft202012Validator
+        schema = json.loads((self.CONTRACTS / name).read_text())
+        Draft202012Validator.check_schema(schema)
+        return Draft202012Validator(schema)
+
+    def _audio(self, **over):
+        doc = {
+            "audio_id": "aud_x", "owner": "qiaosheng", "source_kind": "user_upload",
+            "sha256": "0" * 64, "bytes": 10, "lifecycle": "active",
+            "retention": "standard", "created_at": "2026-10-01T00:00:00Z",
+        }
+        doc.update(over)
+        return doc
+
+    def test_assistant_tts_requires_voice_profile_binding(self):
+        v = self._validator("audio.v1.schema.json")
+        # 缺 origin → 拒
+        bad = self._audio(source_kind="assistant_tts")
+        assert list(v.iter_errors(bad))
+        # origin 缺 version → 拒
+        bad2 = self._audio(source_kind="assistant_tts",
+                           origin={"kind": "siren_voice_message", "voice_profile_id": "vp1"})
+        assert list(v.iter_errors(bad2))
+        # 齐备 → 过
+        ok = self._audio(source_kind="assistant_tts", origin={
+            "kind": "siren_voice_message", "voice_profile_id": "vp1",
+            "voice_profile_version": "3"})
+        assert not list(v.iter_errors(ok))
+        # user_upload 不强制 origin
+        assert not list(v.iter_errors(self._audio()))
+
+    def test_partial_requires_stages(self):
+        v = self._validator("analysis.v1.schema.json")
+        base = {"schema_version": "oido.v1", "analysis_id": "run_x", "audio_id": "aud_x",
+                "profile": "conversation_fast", "status": "partial", "revision": 1}
+        assert list(v.iter_errors(base)), "partial 不带 stages 必须被 schema 拒绝"
+        base["stages"] = []
+        assert list(v.iter_errors(base)), "空 stages 也要拒"
+        base["stages"] = [{"capability": "events", "status": "skipped",
+                           "reason_code": "provider_not_configured"}]
+        assert not list(v.iter_errors(base))
+
+    def test_valence_feature_rejected_by_evidence_schema(self):
+        v = self._validator("evidence.v1.schema.json")
+        bad = {
+            "schema_version": "oido.v1", "kind": "measurement", "feature": "valence_score",
+            "value": -0.7, "unit": "unitless", "method": "m", "method_version": "1",
+            "input_variant_id": "v", "timebase_id": "t",
+            "range": {"start_sample": 0, "end_sample": 10}, "quality_flags": [],
+        }
+        assert list(v.iter_errors(bad)), "valence 是情绪维度，schema 层也要拒"

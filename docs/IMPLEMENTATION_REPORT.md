@@ -68,10 +68,10 @@ transcript_revisions/asset_links/pins 表、temporary 到期清理、feature fla
 
 ## 3. 未完成（不装完成）
 
-- WP02 媒体探测/解码子进程：**未实现**；`ffmpeg` 未安装（blocker，需安装批准或限定 wav/flac/ogg）。
+- WP02 媒体探测/解码子进程：**未实现**。`ffmpeg` 9.0.2 已装并固定（REVIEW_20260929 裁定 2；文档漂移勘误：本行此前仍写"未安装"），但媒体探测/隔离解码/限额子进程代码未写。
 - WP03 其余（波形包络/STFT/Mel/MFCC/频谱描述量/长文件分块）：未实现。
 - WP04–WP09、WP11、WP12：未开始（声质、ASR/对齐/韵律谱、事件、embedding/codec、渲染/查看器、MCP 服务器、实时、Mariposa 关联）。
-- Phase 0 四入口图片运输测试：未开始；**需要宿主用户批准后由char在四个真实客户端读码**，涉及 Claude 账号操作，依"涉 Claude 须二次确认"纪律等待明确授权。
+- Phase 0 四入口图片运输测试：**已批准并武装完毕（夹具/探针/校验器/协议矩阵），零次真实读码执行**——Web/iOS 待宿主用户手动发送，Code 入口待 CLI 安装批准，estómago 探针待已登录终端运行（零凭据搬运）。
 - Siren S-GAP-1/2 修复：在 Siren 仓，须遵守其未提交工作保护流程。
 - MCP 服务器本体：未实现（六工具合同已冻结于 `contracts/mcp-tools.v1.json`）。
 
@@ -81,7 +81,7 @@ transcript_revisions/asset_links/pins 表、temporary 到期清理、feature fla
 
 ## 5. 下一步（按 EXEC 依赖序）
 
-1. WP02 媒体接入（先解决 ffmpeg 决策）＋ WP03 剩余 DSP（A05–A14 夹具）。
+1. 补完 WP01 真实基础（宿主认证/scope/审计写入、outbox 与业务事务接线、心跳与恢复）→ WP02 媒体接入（ffmpeg 已就位）＋ WP03 剩余 DSP（A05–A14 夹具）。
 2. Phase 0 四入口随机码测试（等批准）与 Siren S-GAP 修复（WP10 前）。
 3. WP05 普通话韵律层 + `qiaosheng` 基线（B16–B18）。
 

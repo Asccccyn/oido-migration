@@ -28,5 +28,22 @@
     },
     "created_at": {"type": "string", "format": "date-time"}
   },
-  "$comment": "assistant_tts 必须带 voice_profile_id+version（D02）；temporary(store=false) 不得升级为 standard（§12.3）"
+  "allOf": [
+    {
+      "if": {"properties": {"source_kind": {"const": "assistant_tts"}}},
+      "then": {
+        "required": ["origin"],
+        "properties": {
+          "origin": {
+            "required": ["voice_profile_id", "voice_profile_version"],
+            "properties": {
+              "voice_profile_id": {"type": "string", "minLength": 1},
+              "voice_profile_version": {"type": "string", "minLength": 1}
+            }
+          }
+        }
+      }
+    }
+  ],
+  "$comment": "assistant_tts 必须带 voice_profile_id+version（D02，if/then 强约束）；temporary(store=false) 不得升级为 standard（§12.3）"
 }

@@ -15,7 +15,8 @@
       "type": "string",
       "not": {
         "enum": ["emotion", "mood", "affect", "emotion_score", "mood_score",
-                 "affect_score", "sentiment", "feeling"]
+                 "affect_score", "sentiment", "feeling", "valence", "arousal",
+                 "valence_score", "arousal_score", "emotional_tone"]
       }
     },
     "value": {"type": ["number", "null"]},
