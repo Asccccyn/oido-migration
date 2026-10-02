@@ -37,7 +37,7 @@ def create_app(config: OidoConfig | None = None, conn: sqlite3.Connection | None
             "audio_assets", "audio_origins", "audio_variants", "analysis_runs",
             "analysis_stages", "evidence_items", "artifacts", "events_outbox",
             "idempotency_records", "deletion_tombstones", "acoustic_baselines",
-            "access_audit",
+            "access_audit", "orphan_objects",
         )
         db_ok, reason = False, "no_storage"
         if _state["conn"] is not None:

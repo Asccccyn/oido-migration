@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import re
 import sqlite3
+import time
 from pathlib import Path
 
 _MIGRATIONS_DIR = Path(__file__).resolve().parents[2].parents[0] / "migrations"
@@ -26,6 +27,7 @@ def open_db(path: Path) -> sqlite3.Connection:
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
     conn.execute("PRAGMA journal_mode = WAL")
+    conn.execute("PRAGMA busy_timeout = 5000")   # O2：并发写竞争下先等锁，不立刻炸
     return conn
 
 
@@ -82,8 +84,25 @@ def migrate(conn: sqlite3.Connection, migrations_dir: Path | None = None) -> lis
             ).fetchone():
                 continue
             statements = _split_statements(sql_file.read_text())
-            conn.execute("BEGIN")
+            # O2 残留修复：BEGIN IMMEDIATE 一开始就取写锁——不存在"读快照升级写事务
+            # 必然 SQLITE_BUSY_SNAPSHOT"的路径；取锁竞争则有界重试。
+            lock_attempts = 0
+            while True:
+                try:
+                    conn.execute("BEGIN IMMEDIATE")
+                    break
+                except sqlite3.OperationalError:
+                    lock_attempts += 1
+                    if lock_attempts >= 6:
+                        raise
+                    time.sleep(0.05 * lock_attempts)
             try:
+                # 取得写锁后重读账本：并发迁移者可能刚完成同一版本
+                if conn.execute(
+                    "SELECT 1 FROM schema_migrations WHERE version = ?", (version,)
+                ).fetchone():
+                    conn.execute("ROLLBACK")
+                    continue
                 for stmt in statements:
                     alter = _ALTER_RE.search(stmt)
                     if alter and _column_exists(conn, alter.group(1), alter.group(2)):

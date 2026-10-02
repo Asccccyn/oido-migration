@@ -81,13 +81,48 @@ class AssetService:
         except Exception:
             self.conn.rollback()
             # S03：元数据失败后补偿删除自己刚写的对象（只删本次 key，不扫目录）。
-            # 补偿再失败时对象成为已知形状的孤儿——记录键名便于登记清理任务。
+            # T02：补偿再失败不得静默吞掉——登记带归属的孤儿记录，供自愈/手动清扫。
             try:
                 self.objects.delete(key)
             except OSError:
-                pass
+                try:
+                    self.conn.execute(
+                        """INSERT OR IGNORE INTO orphan_objects
+                           (object_key, audio_id, owner, created_at) VALUES (?, ?, ?, ?)""",
+                        (key, audio_id, owner, utc_now_rfc3339()),
+                    )
+                    self.conn.commit()
+                except sqlite3.Error:
+                    pass   # 连登记都失败：无可再做之事；绝不掩盖原始异常
             raise
+        # 自愈：本次上传成功，顺手清掉该 owner 此前补偿失败留下的孤儿
+        # （有界、只动登记过的键；清扫失败不影响本次成功结果）
+        try:
+            self.cleanup_orphans(owner)
+        except Exception:
+            pass
         return {"audio_id": audio_id, "sha256": sha, "bytes": len(data), "lifecycle": "active"}
+
+    def cleanup_orphans(self, owner: str) -> dict:
+        """清扫该 owner 的未解决孤儿对象：删文件成功才标记 resolved。"""
+        rows = self.conn.execute(
+            """SELECT orphan_id, object_key FROM orphan_objects
+               WHERE owner = ? AND resolved_at IS NULL""",
+            (owner,),
+        ).fetchall()
+        resolved = 0
+        for row in rows:
+            try:
+                self.objects.delete(row["object_key"])
+            except OSError:
+                continue
+            self.conn.execute(
+                "UPDATE orphan_objects SET resolved_at = ? WHERE orphan_id = ?",
+                (utc_now_rfc3339(), row["orphan_id"]),
+            )
+            resolved += 1
+        self.conn.commit()
+        return {"candidates": len(rows), "resolved": resolved}
 
     def get(self, audio_id: str, *, principal: str) -> dict:
         row = self.conn.execute(

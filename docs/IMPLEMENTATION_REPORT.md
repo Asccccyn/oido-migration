@@ -40,7 +40,7 @@ HTTP/MCP 共用业务入口、心跳/重启恢复、outbox 与业务事务接线
 
 ## 2. 测试（全部受监督、前台、小批）
 
-全量 164 passed（审计 20 钉 + 复审 17 钉 + 二次复审 S/O 17 钉）——明细见 `acceptance.json.test_runs`。**证据等级：全部合成信号/内存夹具；无任何真实音频、无任何生产系统接入。**
+全量 171 passed（审计 20 钉 + 复审 17 钉 + 二次复审 17 钉 + 三次复审 T/O 7 钉）——明细见 `acceptance.json.test_runs`。**证据等级：全部合成信号/内存夹具；无任何真实音频、无任何生产系统接入。**
 
 ## 1.5 2026-10-01 独立审计响应（林石见，基线 2bb86fb）
 
@@ -81,6 +81,19 @@ HTTP/MCP 共用业务入口、心跳/重启恢复、outbox 与业务事务接线
 实现要点：S01 的根因是"输入草稿与最终持久结果分叉"——现在区分两阶段（草稿语义校验 →
 回填权威字段 → `validate_evidence_contract` 用 jsonschema 对最终对象执行自家合同）；
 S04 是 create 的 INSERT 改为以"资产仍 active"为条件的原子写。
+
+## 1.8 三次复审响应（基线 7a8d65a：S01/S04/O01 关闭确认，T01/T02 残留，O02 快照交错）
+
+按复审下一轮申报建议执行：已关闭项不重报，残留项给最终状态验证。
+
+| 项 | 关闭证据（tests/security/test_third_reaudit_regressions.py） |
+|---|---|
+| T01 | 同批重复 capability **直接 422**（两种顺序参数化）——校验集合与最终持久集合恒等；读回验证：任务仍 running、stages 零行；正向对照：不同 capability 的 succeeded+skipped 两行都保留、缺失原因可读（TestT01） |
+| T02 | 补偿 unlink 失败 → `orphan_objects` 表登记（键+拟用 audio_id+owner+时间，迁移 0003）→ 恢复后 `cleanup_orphans(owner)` 删文件+标 resolved（闭环）；同 owner 下一次成功上传**自愈清扫**，无需人工介入（TestT02 两用例） |
+| O02 | 迁移改 `BEGIN IMMEDIATE`（不存在读快照升级写事务的路径）+ 有界重试 + **取锁后重读账本**；两种交错验证：B 先完成 → A 返回 []；双方争锁 → 一方胜出完成 v2、无假失败无损坏（TestO02 两用例） |
+
+部署注记：BEGIN IMMEDIATE 已消除 SQLITE_BUSY_SNAPSHOT 假失败路径；生产仍建议单迁移者
+（ EXEC §9 灰度顺序内的既有约定），并发初始化现在是安全冗余而非依赖。
 
 | 项 | 修复 | 回归测试 |
 |---|---|---|

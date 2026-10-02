@@ -383,7 +383,7 @@ class TestR08Ready:
         assert body["reason"].startswith("missing_tables")
 
     def test_expected_versions_matches_dir(self):
-        assert expected_versions(REPO / "migrations") == {1, 2}
+        assert expected_versions(REPO / "migrations") == {1, 2, 3}
 
 
 # ── 低优先项：探针 SDK 版本不再 unknown ────────────────────────────────

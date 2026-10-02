@@ -258,14 +258,14 @@ class TestO02ConcurrentMigrator:
             conn2.execute("COMMIT")
 
         class FirstBegin(Interpose):
-            """v1 已应用，migrate 里第一个 BEGIN 就是 v2 的——此刻注入竞争者。"""
+            """v1 已应用，migrate 里第一个 BEGIN IMMEDIATE 就是 v2 的——此刻注入竞争者。"""
 
             def __init__(self, real, inject):
                 super().__init__(real, lambda sql: False, inject)
                 self._fired = False
 
             def execute(self, sql, params=()):
-                if sql == "BEGIN" and not self._fired:
+                if sql.startswith("BEGIN") and not self._fired:
                     self._fired = True
                     self._inject(self._real)
                 return self._real.execute(sql, params)

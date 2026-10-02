@@ -159,6 +159,16 @@
       "S04 根因=create 无条件 INSERT：改为 WHERE EXISTS(资产 active) 的条件原子写"
     ]
   },
+  "third_reaudit_20261002_response": {
+    "baseline": "7a8d65a",
+    "closed_confirmed_by_auditor": ["S01", "S04", "O01"],
+    "residuals_fixed": [
+      "T01：同批重复 capability 拒绝（校验集合=最终持久集合，读回验证）→ TestT01DuplicateCapability（两种顺序+正向对照）",
+      "T02：orphan_objects 登记表（迁移 0003）+ cleanup_orphans 闭环 + 成功上传自愈清扫 → TestT02OrphanRegistry（两用例）",
+      "O02：迁移改 BEGIN IMMEDIATE+有界重试+取锁后重读账本，消除读快照升级写事务的 SQLITE_BUSY_SNAPSHOT 路径 → TestO02Immediate（两种交错）"
+    ],
+    "deployment_note": "并发迁移现为安全冗余；生产仍建议单迁移者启动顺序"
+  },
   "new_cloud_audio_inference": "forbidden",
   "production_changes": [],
   "constraints_from_review_20260929": [

@@ -181,7 +181,19 @@ class AnalysisService:
         # R07/S02：partial 必须可解释——非空 stages、至少一项缺失/降级能力、
         # 降级项必带**合同枚举内**的原因（EXEC §3.2）
         degraded_statuses = ("partial", "skipped", "failed")
+        seen_capabilities: set[str] = set()
         for stage in stages:
+            # T01：同批重复 capability 会被 (analysis_id, capability) 的 UPSERT 合并，
+            # 校验集合 ≠ 最终持久集合——直接拒绝，保证两套集合恒等
+            cap = stage.get("capability")
+            if not isinstance(cap, str) or not cap.strip():
+                raise AnalysisError("invalid_input", "stage capability must be a non-empty string", 422)
+            if cap in seen_capabilities:
+                raise AnalysisError(
+                    "invalid_input",
+                    f"duplicate capability in one commit batch: {cap!r}", 422,
+                )
+            seen_capabilities.add(cap)
             if stage["status"] not in STAGE_STATES:
                 raise AnalysisError("invalid_input", f"bad stage status: {stage['status']!r}", 422)
             reason = stage.get("reason_code")
