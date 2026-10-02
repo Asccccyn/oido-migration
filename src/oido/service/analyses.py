@@ -54,6 +54,9 @@ class AnalysisService:
     ) -> dict:
         if profile not in PROFILES:
             raise AnalysisError("invalid_profile", f"unknown profile: {profile}", 422)
+        # R05：空/白字串幂等键统一按"无键"处理，杜绝唯一索引裸异常
+        if idempotency_key is not None and not idempotency_key.strip():
+            idempotency_key = None
         asset = self.conn.execute(
             "SELECT owner, lifecycle FROM audio_assets WHERE audio_id = ?", (audio_id,)
         ).fetchone()
@@ -164,6 +167,17 @@ class AnalysisService:
         # 先整体验证再动库（F05/F06：把失败挡在副作用之前）
         if status not in ("succeeded", "partial", "failed"):
             raise AnalysisError("invalid_input", f"bad commit status: {status}", 422)
+        # R07：partial 必须可解释——非空 stages 且缺失/降级项带原因（EXEC §3.2）
+        if status == "partial":
+            if not stages:
+                raise AnalysisError("invalid_input", "partial requires at least one stage", 422)
+            for stage in stages:
+                if stage["status"] in ("partial", "skipped", "failed") and not stage.get("reason_code"):
+                    raise AnalysisError(
+                        "invalid_input",
+                        f"stage {stage['capability']!r} is {stage['status']} without reason_code",
+                        422,
+                    )
         clean_stages = []
         for stage in stages:
             if stage["status"] not in STAGE_STATES:
@@ -180,10 +194,44 @@ class AnalysisService:
             if ev_dropped:
                 ev = ev | {"quality_flags": sorted(set(ev.get("quality_flags", [])) | {"sanitized_at_persistence"})}
             try:
-                validate_evidence(ev)          # F04c/F06：持久层完整合同校验
+                validate_evidence(ev)          # F04c/F06/R03：持久层完整合同校验
             except EvidenceValidationError as exc:
                 raise AnalysisError("invalid_evidence", str(exc), 422) from exc
             clean_evidence.append(ev)
+
+        # R03：证据归属/边界校验——variant 必须真实存在、属于本资产、
+        # timebase 一致、range 不越出实际 sample_count（用数据库真实值，不靠声明）
+        row = self.conn.execute(
+            "SELECT audio_id FROM analysis_runs WHERE analysis_id = ?", (analysis_id,)
+        ).fetchone()
+        if row is None:
+            raise AnalysisError("not_found", "no such analysis", 404)
+        for ev in clean_evidence:
+            variant = self.conn.execute(
+                """SELECT audio_id, timebase_id, sample_count FROM audio_variants
+                   WHERE variant_id = ?""",
+                (ev["input_variant_id"],),
+            ).fetchone()
+            if variant is None:
+                raise AnalysisError(
+                    "invalid_evidence",
+                    f"unknown input_variant_id: {ev['input_variant_id']!r}", 422,
+                )
+            if variant["audio_id"] != row["audio_id"]:
+                raise AnalysisError(
+                    "invalid_evidence", "variant belongs to a different audio", 422)
+            if ev["timebase_id"] != variant["timebase_id"]:
+                raise AnalysisError(
+                    "invalid_evidence",
+                    f"timebase mismatch: evidence {ev['timebase_id']!r} vs variant "
+                    f"{variant['timebase_id']!r}", 422,
+                )
+            if ev["range"]["end_sample"] > variant["sample_count"]:
+                raise AnalysisError(
+                    "invalid_evidence",
+                    f"range end {ev['range']['end_sample']} exceeds variant sample_count "
+                    f"{variant['sample_count']}", 422,
+                )
 
         row = self.conn.execute(
             "SELECT * FROM analysis_runs WHERE analysis_id = ?", (analysis_id,)
@@ -274,8 +322,15 @@ class AnalysisService:
                 (utc_now_rfc3339(), analysis_id),
             )
             if cur.rowcount != 1:
+                # R06：竞争失败不得谎报 cancelled——回读真实终态如实返回
                 self.conn.rollback()
-                return {"analysis_id": analysis_id, "status": "cancelled", "idempotent": True}
+                fresh = self.conn.execute(
+                    "SELECT status FROM analysis_runs WHERE analysis_id = ?",
+                    (analysis_id,),
+                ).fetchone()
+                actual = fresh["status"] if fresh is not None else "unknown"
+                return {"analysis_id": analysis_id, "status": actual,
+                        "idempotent": False, "race_lost": True}
             self.conn.commit()
         except Exception:
             self.conn.rollback()

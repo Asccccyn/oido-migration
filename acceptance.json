@@ -106,6 +106,7 @@
   "audit_20261001_response": {
     "auditor": "林石见（独立审计，基线 2bb86fb）",
     "verdict_accepted": "基础原型，不能按完整插件验收；WP01 原'完成'声明撤回",
+    "reaudit_76d74dd_outcome": "7 项关闭（F01/F02意图/F05/F08新请求/F09/F10/F11-10ms），5 项部分（F03/F04/F06/F07/F12）——初轮'12项全部修复'的声明超出证据，已纠正",
     "fixed_with_regressions": [
       "F01 复活竞态（条件UPDATE原子校验+删除递增fence）→ TestF01Resurrection",
       "F02 删除意图先持久化+清理失败保持可重试 → TestF02DeleteIntent",
@@ -129,6 +130,19 @@
     "C02/C03/C05–C14/C16 无业务实现；C01/C04/C15 局部",
     "Phase 0 四入口未执行；探针待真实登录环境运行"
   ],
+  "reaudit_20261001_response": {
+    "baseline": "76d74dd",
+    "verdict": "8 项（R01-R08）+1 低优先项全部修复，17 个回归钉（tests/security/test_reaudit_20261001_regressions.py）",
+    "highlights": [
+      "R04 根因修正：sqlite3 默认隔离模式 DDL 不自动开事务——迁移改显式 BEGIN/COMMIT/ROLLBACK，中断可回滚，遗留半迁移可恢复",
+      "R01：artifact 删除失败保留 DB 行作重试索引；文件确认删除后才删行",
+      "R03：validate_evidence 完整类型合同 + 持久层以数据库真实 variant 校验归属/timebase/边界",
+      "R06：取消竞态落败回读真实终态（race_lost），不谎报",
+      "R07：TTS 绑定/partial 可解释性进入服务持久化入口；schema origin 非 null、降级 stage 必带 reason",
+      "R08：ready 按迁移版本全集 expected_versions + 12 表核对",
+      "低优先：探针 SDK 版本从解析目录读 package.json"
+    ]
+  },
   "new_cloud_audio_inference": "forbidden",
   "production_changes": [],
   "constraints_from_review_20260929": [

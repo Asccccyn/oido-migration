@@ -25,6 +25,10 @@ class OidoConfig:
     # 服务绑定 loopback（ARCH §13），端口待现场查冲突后定；0 = 不监听
     bind_host: str = "127.0.0.1"
     bind_port: int = 0
+    # R8：ready 按迁移目录的版本全集核对
+    migrations_dir: Path = field(
+        default_factory=lambda: Path(__file__).resolve().parents[2] / "migrations"
+    )
     flags: dict[str, bool] = field(default_factory=lambda: {f: False for f in FEATURE_FLAGS})
 
     def enabled(self, flag: str) -> bool:

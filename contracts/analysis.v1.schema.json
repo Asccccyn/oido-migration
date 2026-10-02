@@ -26,7 +26,13 @@
                      "client_transport_unverified"]
           },
           "detail": {}
-        }
+        },
+        "allOf": [
+          {
+            "if": {"properties": {"status": {"enum": ["partial", "failed", "skipped"]}}},
+            "then": {"required": ["reason_code"]}
+          }
+        ]
       }
     },
     "warnings": {"type": "array", "items": {"type": "string"}}

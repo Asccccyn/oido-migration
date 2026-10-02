@@ -104,6 +104,9 @@ def _sanitize_list(items: list, dropped: list[str], path: str) -> list:
             sub, sub_dropped = sanitize_provider_payload(item)
             out.append(sub)
             dropped.extend(f"{path}[{i}].{k}" for k in sub_dropped)
+        elif isinstance(item, list):
+            # R02：list 套 list 也要递归——任何深度的容器都不给情绪分类留缝
+            out.append(_sanitize_list(item, dropped, f"{path}[{i}]"))
         elif isinstance(item, str) and item.strip().lower() in _EMOTION_VALUE_SAMPLES:
             dropped.append(f"{path}[{i}]")
         else:
@@ -123,15 +126,42 @@ def check_no_json_nan_inf(value: Any) -> None:
             check_no_json_nan_inf(v)
 
 
+def _is_number(v: Any) -> bool:
+    return isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v)
+
+
+def _is_nonempty_str(v: Any) -> bool:
+    return isinstance(v, str) and v.strip() != ""
+
+
 def validate_evidence(ev: dict[str, Any], *, known_features: Iterable[str] = ()) -> None:
-    """最小合同校验：kind/方法版本/区间/单位/质量标记齐备。"""
-    for field in ("kind", "method", "method_version", "input_variant_id", "timebase_id", "range", "quality_flags"):
+    """完整合同校验（R03：类型/版本/结构，归属与边界由 service 层用真实 DB 值再验）。"""
+    for field in ("schema_version", "kind", "feature", "method", "method_version",
+                  "input_variant_id", "timebase_id", "range", "quality_flags"):
         if field not in ev:
             raise EvidenceValidationError(f"evidence missing required field: {field}")
+    if ev["schema_version"] != "oido.v1":
+        raise EvidenceValidationError(f"schema_version must be 'oido.v1', got {ev['schema_version']!r}")
     if ev["kind"] not in EVIDENCE_KINDS:
         raise EvidenceValidationError(f"illegal kind: {ev['kind']!r}")
+    if not _is_nonempty_str(ev["feature"]):
+        raise EvidenceValidationError("feature must be a non-empty string")
     if is_emotion_key(str(ev.get("feature", ""))):
         raise EvidenceValidationError(f"emotion-classified feature forbidden: {ev['feature']!r}")
+    for field in ("method", "method_version", "input_variant_id", "timebase_id"):
+        if not _is_nonempty_str(ev[field]):
+            raise EvidenceValidationError(f"{field} must be a non-empty string, got {ev[field]!r}")
+    if not isinstance(ev["quality_flags"], list) or not all(
+        isinstance(f, str) for f in ev["quality_flags"]
+    ):
+        raise EvidenceValidationError(f"quality_flags must be a list of strings, got {ev['quality_flags']!r}")
+    if "below_floor" in ev and not isinstance(ev["below_floor"], bool):
+        raise EvidenceValidationError("below_floor must be a boolean")
+    if "value" in ev:
+        value = ev["value"]
+        if value is not None and not _is_number(value):
+            raise EvidenceValidationError(f"value must be a finite number or null, got {value!r}")
+
     rng = ev["range"]
     if not (isinstance(rng, dict) and "start_sample" in rng and "end_sample" in rng):
         raise EvidenceValidationError("range must carry start_sample/end_sample")
@@ -142,16 +172,22 @@ def validate_evidence(ev: dict[str, Any], *, known_features: Iterable[str] = ())
             raise EvidenceValidationError(f"range bounds must be integers, got {v!r}")
     if start < 0 or end <= start:
         raise EvidenceValidationError(f"range must satisfy 0 <= start < end, got [{start}, {end})")
+
     if ev["kind"] == "measurement":
-        if "unit" not in ev:
-            raise EvidenceValidationError("measurement requires a unit")
-        value = ev.get("value")
-        if value is None and not ev.get("below_floor"):
+        if not _is_nonempty_str(ev.get("unit")):
+            raise EvidenceValidationError(f"measurement requires a non-empty string unit, got {ev.get('unit')!r}")
+        if ev.get("value") is None and not ev.get("below_floor"):
             raise EvidenceValidationError("null value requires below_floor=true")
     if ev["kind"] == "model_detection":
         for field in ("score_kind", "raw_score", "model_version"):
             if field not in ev:
                 raise EvidenceValidationError(f"model_detection requires {field}")
+        if not _is_nonempty_str(ev["score_kind"]):
+            raise EvidenceValidationError("score_kind must be a non-empty string")
+        if not _is_number(ev["raw_score"]):
+            raise EvidenceValidationError(f"raw_score must be a finite number, got {ev['raw_score']!r}")
+        if not _is_nonempty_str(ev["model_version"]):
+            raise EvidenceValidationError("model_version must be a non-empty string")
     check_no_json_nan_inf(ev)
 
 

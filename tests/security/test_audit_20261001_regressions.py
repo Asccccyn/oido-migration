@@ -72,6 +72,29 @@ def _expire_lease(env, run):
     env["conn"].commit()
 
 
+def _add_variant(env, audio_id=None, *, sample_count=24000):
+    from oido.domain.ids import new_id
+
+    audio_id = audio_id or env["audio_id"]
+    vid, tb = new_id("var"), new_id("tb")
+    env["conn"].execute(
+        """INSERT INTO audio_variants (variant_id, audio_id, transform_kind, sample_rate_hz,
+           channels, sample_count, timebase_id, transform_params, created_at)
+           VALUES (?, ?, 'decode_main', 16000, 1, ?, ?, '{}', '2026-10-01T00:00:00Z')""",
+        (vid, audio_id, sample_count, tb),
+    )
+    env["conn"].commit()
+    return vid, tb
+
+
+def _bind(evidence, vid, tb):
+    for ev in evidence or []:
+        ev.setdefault("schema_version", "oido.v1")
+        ev["input_variant_id"] = vid
+        ev["timebase_id"] = tb
+    return evidence
+
+
 # ── F01：取消/删除与提交、认领交错，终态不可复活 ─────────────────────
 class TestF01Resurrection:
     def test_cancel_race_blocks_commit(self, env):
@@ -169,12 +192,13 @@ class TestF02DeleteIntent:
 class TestF03EvidenceCleanup:
     def test_evidence_stages_artifacts_removed_and_get_blocked(self, env):
         conn = env["conn"]
-        _commit_ok(env, env["run"], evidence=[{
+        vid, tb = _add_variant(env)
+        _commit_ok(env, env["run"], evidence=_bind([{
             "kind": "measurement", "feature": "rms_dbfs", "value": -9.03,
             "unit": "dBFS", "method": "m", "method_version": "1",
             "input_variant_id": "v", "timebase_id": "t",
             "range": {"start_sample": 0, "end_sample": 100}, "quality_flags": [],
-        }])
+        }], vid, tb))
         assert conn.execute(
             "SELECT COUNT(*) c FROM evidence_items WHERE analysis_id = ?", (env["run"],)
         ).fetchone()["c"] == 1
@@ -206,17 +230,18 @@ class TestF03EvidenceCleanup:
 class TestF04F06PersistenceValidation:
     def test_array_emotion_and_stage_detail_sanitized(self, env):
         conn = env["conn"]
+        vid, tb = _add_variant(env)
         _commit_ok(env, env["run"],
                    stages=[{"capability": "events", "status": "succeeded",
                             "detail": {"emotion": "sad"}}],
-                   evidence=[{
+                   evidence=_bind([{
                        "kind": "model_detection", "feature": "laugh_like",
                        "score_kind": "raw", "raw_score": 0.7, "model_version": "m1",
                        "method": "m", "method_version": "1", "input_variant_id": "v",
                        "timebase_id": "t", "quality_flags": [],
                        "range": {"start_sample": 0, "end_sample": 100},
                        "parameters": {"events": [{"emotion": "sad", "label": "happy"}]},
-                   }])
+                   }], vid, tb))
         for row in conn.execute("SELECT payload FROM evidence_items"):
             assert "sad" not in row["payload"] and "happy" not in row["payload"]
         detail = conn.execute(

@@ -17,10 +17,32 @@ def env(tmp_path):
     return conn, AssetService(conn, ObjectStore(tmp_path / "objects")), AnalysisService(conn)
 
 
+def _add_variant(conn, audio_id, *, sample_count=24000):
+    from oido.domain.ids import new_id
+
+    vid, tb = new_id("var"), new_id("tb")
+    conn.execute(
+        """INSERT INTO audio_variants (variant_id, audio_id, transform_kind, sample_rate_hz,
+           channels, sample_count, timebase_id, transform_params, created_at)
+           VALUES (?, ?, 'decode_main', 16000, 1, ?, ?, '{}', '2026-10-01T00:00:00Z')""",
+        (vid, audio_id, sample_count, tb),
+    )
+    conn.commit()
+    return vid, tb
+
+
 def _run_with_evidence(env, evidence):
     conn, assets, analyses = env
     audio_id = assets.register_upload(owner="qiaosheng", data=b"\x00" * 64,
                                       source_kind="user_upload")["audio_id"]
+    vid, tb = _add_variant(conn, audio_id)
+    for ev in evidence:
+        ev.setdefault("schema_version", "oido.v1")
+        ev["input_variant_id"] = vid
+        ev["timebase_id"] = tb
+        rng = ev.setdefault("range", {"start_sample": 0, "end_sample": 24000})
+        if rng["end_sample"] > 24000:
+            rng["end_sample"] = 24000
     run = analyses.create(audio_id=audio_id, profile="conversation_fast",
                           requested_by="qiaosheng")["analysis_id"]
     lease = analyses.claim(run, worker="w1")

@@ -50,8 +50,10 @@ process.env.ESTOMAGO_HOME = tempHome;
 console.log(`[probe:estomago] temp ESTOMAGO_HOME=${tempHome}`);
 
 let sdk;
+let sdkDir = null;
 try {
   const sdkPath = estRequire.resolve('@anthropic-ai/claude-agent-sdk');
+  sdkDir = path.dirname(sdkPath);
   sdk = await import(pathToFileURL(sdkPath).href);
   console.log('[probe:estomago] sdk loaded from estomago node_modules');
 } catch (err) {
@@ -106,7 +108,11 @@ try {
   writeFileSync(path.join(ANSWER_DIR, 'estomago.raw.txt'), text);
   let sdkVersion = 'unknown';
   try {
-    sdkVersion = estRequire('@anthropic-ai/claude-agent-sdk/package.json').version;
+    // 低优先项修复：包不导出 ./package.json 子路径（ERR_PACKAGE_PATH_NOT_EXPORTED），
+    // 改为从解析到的 SDK 目录直接读文件
+    if (sdkDir) {
+      sdkVersion = JSON.parse(readFileSync(path.join(sdkDir, 'package.json'), 'utf8')).version || 'unknown';
+    }
   } catch { /* 版本读取失败不掩盖主结果 */ }
   writeFileSync(path.join(ANSWER_DIR, 'estomago.meta.json'), JSON.stringify({
     entry: 'estomago', sdk_version: sdkVersion, temp_home: tempHome,

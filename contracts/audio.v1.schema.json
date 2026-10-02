@@ -35,6 +35,7 @@
         "required": ["origin"],
         "properties": {
           "origin": {
+            "type": "object",
             "required": ["voice_profile_id", "voice_profile_version"],
             "properties": {
               "voice_profile_id": {"type": "string", "minLength": 1},

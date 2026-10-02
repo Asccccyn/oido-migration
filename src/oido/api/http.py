@@ -32,19 +32,28 @@ def create_app(config: OidoConfig | None = None, conn: sqlite3.Connection | None
 
     @app.get("/health/ready")
     def ready() -> dict:
-        # 审计 F12：迁移非空 + 关键业务表齐全 + 可查询，三者齐备才算 ready
+        # R8/F12：按真实迁移版本集合 + 全部业务关键表核对，不拿"列存在"当迁移成功代理
         required_tables = (
-            "audio_assets", "analysis_runs", "analysis_stages", "evidence_items",
-            "artifacts", "events_outbox", "deletion_tombstones",
+            "audio_assets", "audio_origins", "audio_variants", "analysis_runs",
+            "analysis_stages", "evidence_items", "artifacts", "events_outbox",
+            "idempotency_records", "deletion_tombstones", "acoustic_baselines",
+            "access_audit",
         )
         db_ok, reason = False, "no_storage"
         if _state["conn"] is not None:
             try:
-                versions = _state["conn"].execute(
-                    "SELECT version FROM schema_migrations"
-                ).fetchall()
-                if not versions:
+                from oido.storage.db import expected_versions
+
+                applied = {
+                    r["version"] for r in _state["conn"].execute(
+                        "SELECT version FROM schema_migrations"
+                    )
+                }
+                expected = expected_versions(cfg.migrations_dir)
+                if not applied:
                     reason = "migrations_empty"
+                elif applied != expected:
+                    reason = f"migrations_mismatch:missing={sorted(expected - applied)}"
                 else:
                     present = {
                         r["name"] for r in _state["conn"].execute(
@@ -55,17 +64,7 @@ def create_app(config: OidoConfig | None = None, conn: sqlite3.Connection | None
                     if missing:
                         reason = f"missing_tables:{','.join(missing)}"
                     else:
-                        # 迁移完整性代理检查：0002 的 request_json 列必须在位，
-                        # 否则旧库未升级完就会误报 ready（审计 F12 加固）
-                        cols = {
-                            r["name"] for r in _state["conn"].execute(
-                                "PRAGMA table_info(analysis_runs)"
-                            )
-                        }
-                        if "request_json" not in cols:
-                            reason = "migration_incomplete:request_json"
-                        else:
-                            db_ok, reason = True, "ok"
+                        db_ok, reason = True, "ok"
             except sqlite3.Error as exc:
                 reason = f"db_error:{exc.__class__.__name__}"
         return {"status": "ready" if db_ok else "degraded", "db": db_ok,

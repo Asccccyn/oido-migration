@@ -79,6 +79,7 @@ class TestEmotionBoundary:
 class TestValidation:
     def _base(self, **over):
         ev = {
+            "schema_version": "oido.v1",
             "kind": "measurement", "feature": "rms_dbfs", "value": -9.03,
             "unit": "dBFS", "method": "rms_float_pcm_reference_1",
             "method_version": "1", "input_variant_id": "v1", "timebase_id": "tb",

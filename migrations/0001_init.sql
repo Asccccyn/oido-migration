@@ -1,8 +1,7 @@
 -- oído 初始 schema（OIDO-EXEC §3.1）
 -- SQLite：元数据 + 任务状态 + outbox + tombstone。
 -- 大数组（PCM/频谱/embedding）一律走对象存储，不进库。
-
-PRAGMA journal_mode = WAL;
+-- 注：journal_mode=WAL 由 open_db 设置（R04 后迁移语句须可在事务内执行）。
 
 CREATE TABLE IF NOT EXISTS schema_migrations (
   version INTEGER PRIMARY KEY,

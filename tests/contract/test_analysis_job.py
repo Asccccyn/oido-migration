@@ -26,6 +26,21 @@ def _upload(assets: AssetService, *, owner=OWNER, data=b"\x00\x01" * 100):
     return assets.register_upload(owner=owner, data=data, source_kind="user_upload")
 
 
+def _add_variant(conn, audio_id, *, sample_count=24000, sample_rate=16000):
+    """登记真实 decode_main variant（R03 后证据必须引用真实 variant/timebase）。"""
+    from oido.domain.ids import new_id
+
+    vid, tb = new_id("var"), new_id("tb")
+    conn.execute(
+        """INSERT INTO audio_variants (variant_id, audio_id, transform_kind, sample_rate_hz,
+           channels, sample_count, timebase_id, transform_params, created_at)
+           VALUES (?, ?, 'decode_main', ?, 1, ?, ?, '{}', '2026-10-01T00:00:00Z')""",
+        (vid, audio_id, sample_rate, sample_count, tb),
+    )
+    conn.commit()
+    return vid, tb
+
+
 class TestIdempotencyE11:
     def test_same_key_same_request_dedupes(self, env):
         _, assets, analyses = env
@@ -112,8 +127,9 @@ class TestFencingE12:
         assert first["idempotent"] is False and second["idempotent"] is True
 
     def test_successful_commit_records_stages_and_evidence(self, env):
-        _, assets, analyses = env
+        conn, assets, analyses = env
         audio_id = _upload(assets)["audio_id"]
+        vid, tb = _add_variant(conn, audio_id)
         run = analyses.create(audio_id=audio_id, profile="conversation_fast",
                               requested_by=OWNER)["analysis_id"]
         lease = analyses.claim(run, worker="w1")
@@ -124,9 +140,10 @@ class TestFencingE12:
                 {"capability": "events", "status": "skipped", "reason_code": "provider_not_configured"},
             ],
             evidence=[{
+                "schema_version": "oido.v1",
                 "kind": "measurement", "feature": "rms_dbfs", "value": -9.03,
                 "unit": "dBFS", "method": "rms_float_pcm_reference_1",
-                "method_version": "1", "input_variant_id": "v1", "timebase_id": "tb",
+                "method_version": "1", "input_variant_id": vid, "timebase_id": tb,
                 "range": {"start_sample": 0, "end_sample": 24000}, "quality_flags": [],
             }],
         )

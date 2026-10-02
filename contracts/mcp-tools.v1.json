@@ -21,7 +21,7 @@
           "audio_id": {"type": "string", "pattern": "^aud_"},
           "profile": {"enum": ["full_evidence", "conversation_fast", "inspect_range"]},
           "range": {"type": "object"},
-          "idempotency_key": {"type": "string"}
+          "idempotency_key": {"type": "string", "minLength": 1}
         },
         "additionalProperties": false,
         "not": {"anyOf": [{"required": ["url"]}, {"required": ["path"]}]}

@@ -41,6 +41,17 @@ class AssetService:
     ) -> dict:
         if source_kind not in ("user_upload", "assistant_tts", "external_import"):
             raise AssetError("invalid_input", f"bad source_kind: {source_kind}")
+        # R07：TTS 音色版本绑定（D02）在持久化入口强制，不只写在 schema 注释里
+        if source_kind == "assistant_tts":
+            if (
+                not origin
+                or not str(origin.get("voice_profile_id") or "").strip()
+                or not str(origin.get("voice_profile_version") or "").strip()
+            ):
+                raise AssetError(
+                    "invalid_input",
+                    "assistant_tts requires origin.voice_profile_id + voice_profile_version (D02)",
+                )
         audio_id = new_id("aud")
         key = f"originals/{audio_id}"
         try:
@@ -123,29 +134,36 @@ class AssetService:
             raise
 
         # ── 第 2 步：清理对象（单对象失败不回滚意图；下次重入可重试）────────
-        object_keys: list[str] = []
+        # R01：失败对象的**数据库索引必须保留**，否则重试失去枚举目标。
+        # variant 行不删（本来就保留）；artifact 行只在文件删除成功后删。
+        cleanup_failed = False
+        artifact_ids_removed: list[str] = []
         for variant in self.conn.execute(
             "SELECT object_key FROM audio_variants WHERE audio_id = ?", (audio_id,)
         ):
             if variant["object_key"]:
-                object_keys.append(variant["object_key"])
-        for artifact in self.conn.execute(
-            """SELECT a.object_key FROM artifacts a
+                try:
+                    self.objects.delete(variant["object_key"])
+                except OSError:
+                    cleanup_failed = True
+        artifact_rows = self.conn.execute(
+            """SELECT a.artifact_id, a.object_key FROM artifacts a
                JOIN analysis_runs r ON r.analysis_id = a.analysis_id
                WHERE r.audio_id = ?""",
             (audio_id,),
-        ):
-            object_keys.append(artifact["object_key"])
-        object_keys.append(row["original_object_key"])
-        cleanup_failures: list[str] = []
-        for key in object_keys:
+        ).fetchall()
+        for artifact in artifact_rows:
             try:
-                self.objects.delete(key)
+                self.objects.delete(artifact["object_key"])
+                artifact_ids_removed.append(artifact["artifact_id"])
             except OSError:
-                # 只记键名，不丢意图；留在 deletion_requested 态供下次重入重试
-                cleanup_failures.append(key)
+                cleanup_failed = True          # 行保留：重试可再次枚举该对象
+        try:
+            self.objects.delete(row["original_object_key"])
+        except OSError:
+            cleanup_failed = True
 
-        # ── 第 3 步：派生数据清库 + 终态（F03：evidence/stages/artifacts 全清）──
+        # ── 第 3 步：派生数据清库 + 终态（F03/R01）─────────────────────────
         try:
             self.conn.execute(
                 """DELETE FROM evidence_items WHERE analysis_id IN
@@ -157,14 +175,15 @@ class AssetService:
                    (SELECT analysis_id FROM analysis_runs WHERE audio_id = ?)""",
                 (audio_id,),
             )
-            self.conn.execute(
-                """DELETE FROM artifacts WHERE analysis_id IN
-                   (SELECT analysis_id FROM analysis_runs WHERE audio_id = ?)""",
-                (audio_id,),
-            )
-            if cleanup_failures:
-                # 审计 F02 方向：清理未完成时保持 deletion_requested（可重试），
-                # 不假装 tombstoned；读取与任务已被第 1 步阻断
+            if artifact_ids_removed:
+                marks = ",".join("?" for _ in artifact_ids_removed)
+                self.conn.execute(
+                    f"DELETE FROM artifacts WHERE artifact_id IN ({marks})",
+                    artifact_ids_removed,
+                )
+            if cleanup_failed:
+                # 清理未完成：保持 deletion_requested（可重试），不假装 tombstoned；
+                # 读取与任务已被第 1 步阻断
                 self.conn.commit()
                 return "deletion_requested_pending_cleanup"
             self.conn.execute(
