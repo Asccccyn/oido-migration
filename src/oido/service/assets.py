@@ -41,16 +41,16 @@ class AssetService:
     ) -> dict:
         if source_kind not in ("user_upload", "assistant_tts", "external_import"):
             raise AssetError("invalid_input", f"bad source_kind: {source_kind}")
-        # R07：TTS 音色版本绑定（D02）在持久化入口强制，不只写在 schema 注释里
+        # R07/S02：TTS 音色版本绑定（D02）在持久化入口强制；字段必须是真字符串
+        # （SQLite 会把 True 存成 "1"——不能用 str(...) 真值判断代替类型验证）
         if source_kind == "assistant_tts":
-            if (
-                not origin
-                or not str(origin.get("voice_profile_id") or "").strip()
-                or not str(origin.get("voice_profile_version") or "").strip()
-            ):
+            vp = origin.get("voice_profile_id") if isinstance(origin, dict) else None
+            vv = origin.get("voice_profile_version") if isinstance(origin, dict) else None
+            if not (isinstance(vp, str) and vp.strip()
+                    and isinstance(vv, str) and vv.strip()):
                 raise AssetError(
                     "invalid_input",
-                    "assistant_tts requires origin.voice_profile_id + voice_profile_version (D02)",
+                    "assistant_tts requires string origin.voice_profile_id + voice_profile_version (D02)",
                 )
         audio_id = new_id("aud")
         key = f"originals/{audio_id}"
@@ -80,6 +80,12 @@ class AssetService:
             self.conn.commit()
         except Exception:
             self.conn.rollback()
+            # S03：元数据失败后补偿删除自己刚写的对象（只删本次 key，不扫目录）。
+            # 补偿再失败时对象成为已知形状的孤儿——记录键名便于登记清理任务。
+            try:
+                self.objects.delete(key)
+            except OSError:
+                pass
             raise
         return {"audio_id": audio_id, "sha256": sha, "bytes": len(data), "lifecycle": "active"}
 

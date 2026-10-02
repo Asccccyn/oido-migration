@@ -7,7 +7,9 @@ emotion / affect / mood 不是 oído v1 的合法证据：provider 返回即弃�
 
 from __future__ import annotations
 
+import json
 import math
+from pathlib import Path
 from typing import Any, Iterable
 
 EVIDENCE_KINDS = ("measurement", "model_detection", "model_description")
@@ -162,6 +164,25 @@ def validate_evidence(ev: dict[str, Any], *, known_features: Iterable[str] = ())
         if value is not None and not _is_number(value):
             raise EvidenceValidationError(f"value must be a finite number or null, got {value!r}")
 
+    # S01：可选字段一旦出现，类型必须符合既有 schema 合同（此前只在 schema 文件里写、不执行）
+    _OPTIONAL_CONTRACT: tuple[tuple[str, Any], ...] = (
+        ("evidence_id", str), ("audio_id", str), ("analysis_id", str),
+        ("parameters", dict), ("fixture_only", bool),
+        ("score_kind", str), ("model_version", str),
+    )
+    for field, expected in _OPTIONAL_CONTRACT:
+        if field in ev and not isinstance(ev[field], expected):
+            raise EvidenceValidationError(
+                f"{field} must be {expected.__name__}, got {type(ev[field]).__name__}")
+    if "calibration" in ev and not (ev["calibration"] is None or isinstance(ev["calibration"], str)):
+        raise EvidenceValidationError("calibration must be a string or null")
+    if "raw_score" in ev and not _is_number(ev["raw_score"]):
+        raise EvidenceValidationError(f"raw_score must be a finite number, got {ev['raw_score']!r}")
+    if "revision" in ev:
+        rev = ev["revision"]
+        if isinstance(rev, bool) or not isinstance(rev, int) or rev < 1:
+            raise EvidenceValidationError(f"revision must be an integer >= 1, got {rev!r}")
+
     rng = ev["range"]
     if not (isinstance(rng, dict) and "start_sample" in rng and "end_sample" in rng):
         raise EvidenceValidationError("range must carry start_sample/end_sample")
@@ -191,6 +212,31 @@ def validate_evidence(ev: dict[str, Any], *, known_features: Iterable[str] = ())
     check_no_json_nan_inf(ev)
 
 
+# ── S01：最终持久结果必须通过自家 schema 合同 ──────────────────────────
+_CONTRACT_PATH = Path(__file__).resolve().parents[3] / "contracts" / "evidence.v1.schema.json"
+_contract_validator = None
+
+
+def validate_evidence_contract(ev: dict[str, Any]) -> None:
+    """对最终序列化对象执行 contracts/evidence.v1.schema.json 全量校验。
+
+    S01 根因：输入草稿与持久结果分叉——service 回填真实 ID/revision 后，
+    必须以最终形态过一遍自家合同，否则消费者会拒收"标记成功"的记录。
+    """
+    global _contract_validator
+    if _contract_validator is None:
+        import jsonschema
+
+        schema = json.loads(_CONTRACT_PATH.read_text())
+        jsonschema.Draft202012Validator.check_schema(schema)
+        _contract_validator = jsonschema.Draft202012Validator(schema)
+    errors = list(_contract_validator.iter_errors(ev))
+    if errors:
+        raise EvidenceValidationError(
+            "contract: " + "; ".join(e.message for e in errors[:3])
+        )
+
+
 # 便捷：构造一条合规 RMS measurement（测试与 fixture 共用）
 def make_rms_measurement(
     *, value: float | None, unit: str = "dBFS", range_: dict[str, int],
@@ -200,7 +246,7 @@ def make_rms_measurement(
 ) -> dict[str, Any]:
     ev = {
         "schema_version": "oido.v1",
-        "evidence_id": None,  # 由存储层分配
+        # evidence_id 不在此预设（S01：null 会被自家 schema 拒收；由存储层分配回填）
         "kind": "measurement",
         "feature": "rms_dbfs",
         "value": None if below_floor else (None if value is None else float(value)),
@@ -209,7 +255,7 @@ def make_rms_measurement(
         "method_version": method_version,
         "input_variant_id": input_variant_id,
         "timebase_id": timebase_id,
-        "range": range_,
+        "range": dict(range_),
         "parameters": parameters or {},
         "quality_flags": [],
     }

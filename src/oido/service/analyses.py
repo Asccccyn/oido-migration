@@ -16,10 +16,13 @@ import sqlite3
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
-from oido.domain.evidence import EvidenceValidationError, sanitize_provider_payload, validate_evidence
+from oido.domain.evidence import (
+    EvidenceValidationError, sanitize_provider_payload, validate_evidence,
+    validate_evidence_contract,
+)
 from oido.domain.ids import new_id, utc_now_rfc3339
 from oido.domain.states import (
-    STAGE_STATES, IllegalTransition, is_terminal_job, job_transition,
+    REASON_CODES, STAGE_STATES, IllegalTransition, is_terminal_job, job_transition,
 )
 
 PROFILES = ("full_evidence", "conversation_fast", "inspect_range")
@@ -79,17 +82,25 @@ class AnalysisService:
         analysis_id = new_id("run")
         now = utc_now_rfc3339()
         try:
-            self.conn.execute(
+            # S04：资产仍 active 作为 INSERT 的原子条件——创建与 owner 删除交错时
+            # 不再产生"永远无法执行"的 queued 任务，而是规范 404
+            cur = self.conn.execute(
                 """INSERT INTO analysis_runs
                    (analysis_id, audio_id, profile, requested_by, status, revision,
                     idempotency_key, request_digest, request_json, created_at, updated_at)
-                   VALUES (?, ?, ?, ?, 'queued', 0, ?, ?, ?, ?, ?)""",
+                   SELECT ?, ?, ?, ?, 'queued', 0, ?, ?, ?, ?, ?
+                   WHERE EXISTS (SELECT 1 FROM audio_assets aa
+                                 WHERE aa.audio_id = ? AND aa.owner = ?
+                                   AND aa.lifecycle = 'active')""",
                 (
                     analysis_id, audio_id, profile, requested_by, idempotency_key, digest,
                     json.dumps(request_payload, ensure_ascii=False, sort_keys=True, allow_nan=False),
-                    now, now,
+                    now, now, audio_id, requested_by,
                 ),
             )
+            if cur.rowcount != 1:
+                self.conn.rollback()
+                raise AnalysisError("not_visible", "audio not found", 404)
             self.conn.commit()
         except sqlite3.IntegrityError:
             # F07：并发下唯一索引先于我们插入——回读比对，去重或 409
@@ -167,21 +178,36 @@ class AnalysisService:
         # 先整体验证再动库（F05/F06：把失败挡在副作用之前）
         if status not in ("succeeded", "partial", "failed"):
             raise AnalysisError("invalid_input", f"bad commit status: {status}", 422)
-        # R07：partial 必须可解释——非空 stages 且缺失/降级项带原因（EXEC §3.2）
-        if status == "partial":
-            if not stages:
-                raise AnalysisError("invalid_input", "partial requires at least one stage", 422)
-            for stage in stages:
-                if stage["status"] in ("partial", "skipped", "failed") and not stage.get("reason_code"):
-                    raise AnalysisError(
-                        "invalid_input",
-                        f"stage {stage['capability']!r} is {stage['status']} without reason_code",
-                        422,
-                    )
-        clean_stages = []
+        # R07/S02：partial 必须可解释——非空 stages、至少一项缺失/降级能力、
+        # 降级项必带**合同枚举内**的原因（EXEC §3.2）
+        degraded_statuses = ("partial", "skipped", "failed")
         for stage in stages:
             if stage["status"] not in STAGE_STATES:
                 raise AnalysisError("invalid_input", f"bad stage status: {stage['status']!r}", 422)
+            reason = stage.get("reason_code")
+            if reason is not None and reason not in REASON_CODES:
+                raise AnalysisError(
+                    "invalid_input",
+                    f"stage {stage['capability']!r} reason_code {reason!r} not in contract enum",
+                    422,
+                )
+            if stage["status"] in degraded_statuses and not reason:
+                raise AnalysisError(
+                    "invalid_input",
+                    f"stage {stage['capability']!r} is {stage['status']} without reason_code",
+                    422,
+                )
+        if status == "partial":
+            if not stages:
+                raise AnalysisError("invalid_input", "partial requires at least one stage", 422)
+            if not any(s["status"] in degraded_statuses for s in stages):
+                raise AnalysisError(
+                    "invalid_input",
+                    "partial requires at least one stage with missing/incomplete capability",
+                    422,
+                )
+        clean_stages = []
+        for stage in stages:
             detail, detail_dropped = sanitize_provider_payload(stage.get("detail") or {})
             clean_stages.append({
                 "capability": stage["capability"], "status": stage["status"],
@@ -248,6 +274,18 @@ class AnalysisService:
             raise AnalysisError("invalid_transition", str(exc), 409) from exc
         revision = row["revision"] + 1
         now = utc_now_rfc3339()
+        # S01：输入草稿 → 最终持久结果。回填权威 audio/analysis/revision/evidence_id，
+        # 再对**最终形态**执行自家 schema 合同校验（此前 schema 只写在文件里不执行）
+        for ev in clean_evidence:
+            ev["audio_id"] = row["audio_id"]
+            ev["analysis_id"] = analysis_id
+            ev["revision"] = revision
+            if not isinstance(ev.get("evidence_id"), str) or not ev["evidence_id"]:
+                ev["evidence_id"] = new_id("ev")
+            try:
+                validate_evidence_contract(ev)
+            except EvidenceValidationError as exc:
+                raise AnalysisError("invalid_evidence", str(exc), 422) from exc
         try:
             # F01 核心：条件 UPDATE 原子验证 token + 非终态 + 资产仍 active；
             # SELECT 与 UPDATE 之间发生的取消/删除会在这里落空

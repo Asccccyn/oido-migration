@@ -68,7 +68,6 @@ def migrate(conn: sqlite3.Connection, migrations_dir: Path | None = None) -> lis
         "CREATE TABLE IF NOT EXISTS schema_migrations (version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL)"
     )
     conn.commit()
-    applied = {r["version"] for r in conn.execute("SELECT version FROM schema_migrations")}
     ran: list[int] = []
     from oido.domain.ids import utc_now_rfc3339
 
@@ -77,7 +76,10 @@ def migrate(conn: sqlite3.Connection, migrations_dir: Path | None = None) -> lis
     try:
         for sql_file in sorted(mdir.glob("*.sql")):
             version = int(sql_file.name.split("_")[0])
-            if version in applied:
+            # O2：每个版本都重读账本（并发迁移者可能已在此期间完成）
+            if conn.execute(
+                "SELECT 1 FROM schema_migrations WHERE version = ?", (version,)
+            ).fetchone():
                 continue
             statements = _split_statements(sql_file.read_text())
             conn.execute("BEGIN")
@@ -95,6 +97,15 @@ def migrate(conn: sqlite3.Connection, migrations_dir: Path | None = None) -> lis
                 )
                 conn.execute("COMMIT")
                 ran.append(version)
+            except sqlite3.IntegrityError:
+                # O2：并发迁移者先完成了同一版本——假失败不得让启动崩掉。
+                # 验证版本确实已登记则视为完成，否则才是真错误
+                conn.execute("ROLLBACK")
+                if conn.execute(
+                    "SELECT 1 FROM schema_migrations WHERE version = ?", (version,)
+                ).fetchone():
+                    continue
+                raise
             except sqlite3.Error:
                 conn.execute("ROLLBACK")
                 raise

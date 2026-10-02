@@ -40,7 +40,7 @@ HTTP/MCP 共用业务入口、心跳/重启恢复、outbox 与业务事务接线
 
 ## 2. 测试（全部受监督、前台、小批）
 
-全量 147 passed（审计 20 钉 + 复审 R01–R08 的 17 钉）——明细见 `acceptance.json.test_runs`。**证据等级：全部合成信号/内存夹具；无任何真实音频、无任何生产系统接入。**
+全量 164 passed（审计 20 钉 + 复审 17 钉 + 二次复审 S/O 17 钉）——明细见 `acceptance.json.test_runs`。**证据等级：全部合成信号/内存夹具；无任何真实音频、无任何生产系统接入。**
 
 ## 1.5 2026-10-01 独立审计响应（林石见，基线 2bb86fb）
 
@@ -64,6 +64,23 @@ HTTP/MCP 共用业务入口、心跳/重启恢复、outbox 与业务事务接线
 
 复审确认关闭的旧项：F01、F02（删除意图）、F05、F08（新请求）、F09、F10、F11（10ms）；
 旧 F03/F04/F06/F07/F12 的残余部分由 R01/R02/R03/R05/R08 补齐。
+
+## 1.7 二次复审响应（基线 fddb093：6+1 关闭、R03/R07 残留 S01/S02、新 S03/S04、观察 O01/O02）
+
+按复审建议的申报粒度，逐项关闭证据（tests/security/test_second_reaudit_regressions.py）：
+
+| 项 | 关闭证据 |
+|---|---|
+| S01 | 正常链路 `make_rms_measurement → commit_result → 回读 payload → 自家 evidence.v1 schema 通过`（草稿不再预置 null evidence_id；service 回填权威 audio/analysis/revision/evidence_id 后对**最终形态**整单过合同）；8 个可选字段反例（parameters/fixture_only/calibration/evidence_id/audio_id/analysis_id/revision/raw_score）全部 422 拒收且零落库 |
+| S02 | 全 succeeded 的 partial 被拒（"至少一项缺失/降级能力"）；`not_a_contract_reason` 被 reason 枚举拒收；TTS 布尔绑定被真类型校验拒收（SQLite 把 True 存 "1" 的坑堵死）；合法 partial 通过 |
+| S03 | 同 external_id 二次上传失败后，对象目录前后集合相等（失败上传的字节被补偿删除）；owner 删除全部资产后目录干净 |
+| S04 | 两连接注入：删除赢在 create 的 INSERT 之前 → 返回规范 404，非 active 资产上 queued 任务数 = 0（夹具任务走 cancelled） |
+| O01 | ready 恢复关键列检查：DROP COLUMN request_json 的损坏库 → degraded missing_column |
+| O02 | 并发迁移者假失败：另一连接在 BEGIN 后抢先完成 v2 → IntegrityError 处理器验证版本已登记 → 静默视为已完成（migrate 返回 []，账本 {1,2}） |
+
+实现要点：S01 的根因是"输入草稿与最终持久结果分叉"——现在区分两阶段（草稿语义校验 →
+回填权威字段 → `validate_evidence_contract` 用 jsonschema 对最终对象执行自家合同）；
+S04 是 create 的 INSERT 改为以"资产仍 active"为条件的原子写。
 
 | 项 | 修复 | 回归测试 |
 |---|---|---|

@@ -143,6 +143,22 @@
       "低优先：探针 SDK 版本从解析目录读 package.json"
     ]
   },
+  "second_reaudit_20261001_response": {
+    "baseline": "fddb093",
+    "outcome_accepted": "6+1 关闭（R01/R02/R04/R05/R06/R08+SDK 版本），R03/R07 部分修复（S01/S02），新确认 S03/S04，观察 O01/O02——全部处理",
+    "closure_evidence": [
+      "S01：make_rms→commit→payload 过自家 schema + 8 可选字段反例 422（test_second_reaudit_regressions.py::TestS01FinalContract）",
+      "S02：全 succeeded partial 拒/非法 reason 拒/TTS 布尔拒/合法 partial 过（TestS02PartialSemantics）",
+      "S03：失败上传补偿删除自身对象，目录前后集合相等（TestS03UploadOrphan）",
+      "S04：删除先于 create INSERT → 404 且无 queued 垃圾，两连接证据（TestS04CreateDeleteRace）",
+      "O01：ready 恢复列检查（TestO01ColumnCheck）",
+      "O02：并发迁移者 IntegrityError→验证已应用→静默完成（TestO02ConcurrentMigrator）"
+    ],
+    "implementation_notes": [
+      "S01 根因=输入草稿与最终持久结果分叉：service 回填权威 audio/analysis/revision/evidence_id 后以 jsonschema 对最终对象执行 contracts/evidence.v1.schema.json",
+      "S04 根因=create 无条件 INSERT：改为 WHERE EXISTS(资产 active) 的条件原子写"
+    ]
+  },
   "new_cloud_audio_inference": "forbidden",
   "production_changes": [],
   "constraints_from_review_20260929": [

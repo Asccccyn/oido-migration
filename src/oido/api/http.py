@@ -64,7 +64,17 @@ def create_app(config: OidoConfig | None = None, conn: sqlite3.Connection | None
                     if missing:
                         reason = f"missing_tables:{','.join(missing)}"
                     else:
-                        db_ok, reason = True, "ok"
+                        # O1：恢复关键列检查——版本账本与表都在，不代表列没被
+                        # 错误还原弄丢（结构损坏时代价低，值得多这一道）
+                        cols = {
+                            r["name"] for r in _state["conn"].execute(
+                                "PRAGMA table_info(analysis_runs)"
+                            )
+                        }
+                        if "request_json" not in cols:
+                            reason = "missing_column:analysis_runs.request_json"
+                        else:
+                            db_ok, reason = True, "ok"
             except sqlite3.Error as exc:
                 reason = f"db_error:{exc.__class__.__name__}"
         return {"status": "ready" if db_ok else "degraded", "db": db_ok,
