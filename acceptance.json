@@ -169,6 +169,18 @@
     ],
     "deployment_note": "并发迁移现为安全冗余；生产仍建议单迁移者启动顺序"
   },
+  "fourth_reaudit_20261002_response": {
+    "baseline": "7ccf055",
+    "closed_confirmed_by_auditor": ["T01", "O02"],
+    "t02_residual_fixed_via": "写前意图（write-ahead intent）：登记先于文件；DB 不可写→零文件产生；意图成功后文件/元数据失败→意图行即孤儿记录（不依赖事后写库）；成功时意图与资产同事务消除",
+    "cleanup_hardening": [
+      "引用核对：被 active 资产引用的键不删、仅标 resolved",
+      "宽限 300s：新鲜意图可能是进行中上传，自愈不碰（跨连接看不到未提交事务）"
+    ],
+    "closure_evidence": [
+      "test_fourth_reaudit_regressions.py::TestFourthReauditT02（5 用例：零文件产生/锁间孤儿可定位清理/引用保护/宽限保护/UNIQUE 回归）"
+    ]
+  },
   "new_cloud_audio_inference": "forbidden",
   "production_changes": [],
   "constraints_from_review_20260929": [

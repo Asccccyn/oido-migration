@@ -11,11 +11,16 @@
 from __future__ import annotations
 
 import sqlite3
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from oido.domain.ids import new_id, utc_now_rfc3339
 from oido.domain.states import asset_transition
 from oido.storage.objects import ObjectStore
+
+# 自愈清扫的宽限：保护"意图已登记、文件已写、元数据事务未提交"的进行中上传
+# 不被同 owner 的并发清扫误删（另一连接看不到未提交事务，只能靠时间窗）
+UPLOAD_INTENT_GRACE_SECONDS = 300
 
 
 class AssetError(Exception):
@@ -54,6 +59,19 @@ class AssetService:
                 )
         audio_id = new_id("aud")
         key = f"originals/{audio_id}"
+        # ── T02 四审残留闭合：写前意图（write-ahead intent）────────────────
+        # 登记先于文件产生。数据库不可写（如他连接持写锁）→ 这里直接失败，
+        # **不会产生任何无索引字节**；登记成功后无论后续哪一步死，恢复依据都已在库。
+        try:
+            self.conn.execute(
+                """INSERT INTO orphan_objects (object_key, audio_id, owner, created_at)
+                   VALUES (?, ?, ?, ?)""",
+                (key, audio_id, owner, utc_now_rfc3339()),
+            )
+            self.conn.commit()
+        except sqlite3.Error:
+            self.conn.rollback()
+            raise
         try:
             sha = self.objects.put_bytes(key, data)
             now = utc_now_rfc3339()
@@ -77,48 +95,76 @@ class AssetService:
                         origin.get("voice_profile_version"), origin.get("provider_model_revision"),
                     ),
                 )
+            # 成功：意图行与资产行**同事务**消除（资产存在 ⟺ 意图消失）
+            self.conn.execute(
+                "DELETE FROM orphan_objects WHERE object_key = ?", (key,)
+            )
             self.conn.commit()
         except Exception:
             self.conn.rollback()
-            # S03：元数据失败后补偿删除自己刚写的对象（只删本次 key，不扫目录）。
-            # T02：补偿再失败不得静默吞掉——登记带归属的孤儿记录，供自愈/手动清扫。
+            # S03：补偿删除自己刚写的对象（只删本次 key，不扫目录）。
             try:
                 self.objects.delete(key)
-            except OSError:
                 try:
                     self.conn.execute(
-                        """INSERT OR IGNORE INTO orphan_objects
-                           (object_key, audio_id, owner, created_at) VALUES (?, ?, ?, ?)""",
-                        (key, audio_id, owner, utc_now_rfc3339()),
+                        "DELETE FROM orphan_objects WHERE object_key = ?", (key,)
                     )
                     self.conn.commit()
                 except sqlite3.Error:
-                    pass   # 连登记都失败：无可再做之事；绝不掩盖原始异常
+                    # 文件已删、行未清：留下指向已删文件的陈旧行——
+                    # cleanup 会发现文件不存在并标 resolved，有恢复依据，非静默丢失
+                    self.conn.rollback()
+            except OSError:
+                # 文件没删掉：写前登记的意图行**就是**孤儿记录——它在文件产生之前
+                # 已持久化，不依赖此刻可能仍不可写的数据库（四审残留的闭合点）
+                pass
             raise
-        # 自愈：本次上传成功，顺手清掉该 owner 此前补偿失败留下的孤儿
-        # （有界、只动登记过的键；清扫失败不影响本次成功结果）
+        # 自愈：清掉该 owner 此前的陈旧孤儿（带宽限，保护进行中的上传）
         try:
-            self.cleanup_orphans(owner)
+            self.cleanup_orphans(owner, min_age_seconds=UPLOAD_INTENT_GRACE_SECONDS)
         except Exception:
             pass
         return {"audio_id": audio_id, "sha256": sha, "bytes": len(data), "lifecycle": "active"}
 
-    def cleanup_orphans(self, owner: str) -> dict:
-        """清扫该 owner 的未解决孤儿对象：删文件成功才标记 resolved。"""
+    def cleanup_orphans(self, owner: str, *, min_age_seconds: int = 0) -> dict:
+        """清扫该 owner 的未解决孤儿对象。
+
+        - 只动**登记过**的键（写前意图行），不扫目录；
+        - 引用核对：被 active 资产引用的键视为有效对象，不删、仅标 resolved；
+        - 宽限：min_age_seconds 内的登记可能是进行中的上传，跳过（并发清扫保护）。
+        删文件成功才标记 resolved；失败保留行供下次重试。
+        """
+        now = utc_now_rfc3339()
+        cutoff = (
+            datetime.now(timezone.utc) - timedelta(seconds=min_age_seconds)
+        ).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+        # 先把"其实已被正式资产引用"的陈旧意图标记 resolved（对象有效，不能删）
+        self.conn.execute(
+            """UPDATE orphan_objects SET resolved_at = ?
+               WHERE owner = ? AND resolved_at IS NULL AND created_at <= ?
+                 AND EXISTS (SELECT 1 FROM audio_assets aa
+                             WHERE aa.original_object_key = orphan_objects.object_key
+                               AND aa.lifecycle = 'active')""",
+            (now, owner, cutoff),
+        )
         rows = self.conn.execute(
             """SELECT orphan_id, object_key FROM orphan_objects
-               WHERE owner = ? AND resolved_at IS NULL""",
-            (owner,),
+               WHERE owner = ? AND resolved_at IS NULL AND created_at <= ?
+                 AND NOT EXISTS (SELECT 1 FROM audio_assets aa
+                                 WHERE aa.original_object_key = orphan_objects.object_key
+                                   AND aa.lifecycle = 'active')""",
+            (owner, cutoff),
         ).fetchall()
         resolved = 0
         for row in rows:
             try:
                 self.objects.delete(row["object_key"])
             except OSError:
-                continue
+                continue          # 文件不在（ObjectStore 对 FileNotFoundError 静默）或删失败：
+                                 # 前者会在下方标记 resolved，后者保留行重试
             self.conn.execute(
                 "UPDATE orphan_objects SET resolved_at = ? WHERE orphan_id = ?",
-                (utc_now_rfc3339(), row["orphan_id"]),
+                (now, row["orphan_id"]),
             )
             resolved += 1
         self.conn.commit()

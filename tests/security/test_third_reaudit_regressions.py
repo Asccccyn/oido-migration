@@ -175,8 +175,13 @@ class TestT02OrphanRegistry:
         assert env["conn"].execute(
             "SELECT COUNT(*) c FROM orphan_objects WHERE resolved_at IS NULL"
         ).fetchone()["c"] == 1
+        # 回填时间戳：自愈带宽限（保护进行中上传），只清陈旧孤儿
+        env["conn"].execute(
+            "UPDATE orphan_objects SET created_at = '2020-01-01T00:00:00.000Z' "
+            "WHERE resolved_at IS NULL")
+        env["conn"].commit()
 
-        # 同 owner 下一次成功上传自动清扫（自愈），无需人工介入
+        # 同 owner 下一次成功上传自动清扫陈旧孤儿（自愈），无需人工介入
         env["assets"].objects = ObjectStore(env["tmp"] / "objects")
         env["assets"].register_upload(owner=OWNER, data=b"ok-bytes",
                                       source_kind="user_upload")
