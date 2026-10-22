@@ -33,6 +33,7 @@ pooch==1.9.0
 pycparser==3.0
 pydantic==2.13.5
 pydantic_core==2.46.5
+pypinyin==0.55.0
 pytest==9.1.1
 referencing==0.37.0
 requests==2.34.2

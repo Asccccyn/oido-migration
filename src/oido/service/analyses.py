@@ -25,7 +25,7 @@ from oido.domain.states import (
     REASON_CODES, STAGE_STATES, IllegalTransition, is_terminal_job, job_transition,
 )
 
-PROFILES = ("full_evidence", "conversation_fast", "inspect_range")
+PROFILES = ("prosody", "full_evidence", "conversation_fast", "inspect_range")
 _TERMINAL = ("succeeded", "partial", "failed", "cancelled")
 
 

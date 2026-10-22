@@ -1,0 +1,63 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "oido:mcp-tools.v2",
+  "title": "“我只听你”六个 MCP 工具 v2（audio_ref 口径；v1 的 audio_id 仅兼容映射）",
+  "toolset_display_name": "我只听你",
+  "tools": [
+    {
+      "name": "oido_capabilities",
+      "description": "当前 provider/能力/限制与版本；只读，不暴露凭据",
+      "input": {"type": "object", "properties": {"capability": {"type": "string"}}, "additionalProperties": false},
+      "output": "capabilities json",
+      "side_effects": "none"
+    },
+    {
+      "name": "oido_analyze",
+      "description": "对已登记 audio_ref 创建幂等分析任务；默认 profile=prosody（文字韵律谱）。不接受 URL 或本机路径",
+      "input": {
+        "type": "object",
+        "required": ["audio_ref"],
+        "properties": {
+          "audio_ref": {"type": "string", "pattern": "^(est|siren):[A-Za-z0-9_-]{1,128}$", "maxLength": 135},
+          "profile": {"enum": ["prosody", "inspect_range"]},
+          "range_ms": {"$ref": "urn:oido:projections:v1#/$defs/range_ms"},
+          "idempotency_key": {"type": "string", "minLength": 1}
+        },
+        "additionalProperties": false,
+        "not": {"anyOf": [{"required": ["url"]}, {"required": ["path"]}]}
+      },
+      "output": "analysis_ticket 或 evidence_overview（有界同步等待内完成时）",
+      "side_effects": "creates_analysis_job"
+    },
+    {
+      "name": "oido_get",
+      "description": "概览/逐字谱分页；默认文字韵律谱概览，不含图片与原数组",
+      "input": {"type": "object", "required": ["analysis_id"], "properties": {"analysis_id": {"type": "string"}, "revision": {"type": "integer", "minimum": 1}, "detail": {"enum": ["overview", "prosody_page"]}, "cursor": {"type": "string", "minLength": 1, "maxLength": 160}, "range_ms": {"$ref": "urn:oido:projections:v1#/$defs/range_ms"}}, "additionalProperties": false},
+      "output": "evidence_overview 或 prosody_page",
+      "side_effects": "none"
+    },
+    {
+      "name": "oido_view",
+      "description": "真实数值渲染的图像内容；Phase 0 未通过的宿主不得默认调用",
+      "input": {"type": "object", "required": ["analysis_id", "view"], "properties": {"analysis_id": {"type": "string"}, "revision": {"type": "integer", "minimum": 1}, "view": {"enum": ["overview", "waveform", "spectrogram", "pitch", "energy"]}, "range_ms": {"$ref": "urn:oido:projections:v1#/$defs/range_ms"}}, "additionalProperties": false},
+      "output": "image content + metadata",
+      "side_effects": "bounded_render"
+    },
+    {
+      "name": "oido_find",
+      "description": "在指定音频内按文字查询找区间；不因一句“找找”扩大到全库",
+      "input": {"type": "object", "required": ["audio_ref", "query"], "properties": {"audio_ref": {"type": "string", "pattern": "^(est|siren):[A-Za-z0-9_-]{1,128}$"}, "query": {"type": "string", "minLength": 1, "maxLength": 200}, "mode": {"type": "string"}, "limit": {"type": "integer", "minimum": 1, "maximum": 10}}, "additionalProperties": false},
+      "output": "有限候选区间（默认 3）",
+      "side_effects": "none"
+    },
+    {
+      "name": "oido_compare",
+      "description": "两个具体资产/区间的可比较量差异；不输出情绪结论；无基线时拒绝“比平时”表述",
+      "input": {"type": "object", "required": ["left", "right"], "properties": {"left": {"type": "object"}, "right": {"type": "object"}, "metrics": {"type": "array", "items": {"type": "string"}}}, "additionalProperties": false},
+      "output": "可比性 + 差异 + 限制",
+      "side_effects": "none"
+    }
+  ],
+  "$compat": "v1 的 audio_id（^aud_ 前缀）在 MCP 适配层单层映射为 oído 内部 ID，不与新口径并列暴露给同一模型",
+  "$comment": "工具不提供任意本机路径/任意 URL 参数（WP00 §3：URL 抓取只留在 Siren 边界）。v1 文件保留作历史参照，本文件是唯一现行真源。"
+}

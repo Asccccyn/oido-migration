@@ -1,30 +1,88 @@
-"""HTTP API v0.1：health/live、health/ready、/v1/capabilities（EXEC §4.1 子集）。
+"""HTTP API v1：health/capabilities + 受信导入/分析/投影（联合施工 P3）。
 
-只绑定 loopback；feature flags 默认全关。
-更完整的 /v1/audio、/v1/analyses 等 REST 在 WP02+ 随 ingest 打开。
+只绑定 loopback（config.bind_port，默认 0=不监听）；/v1/* 除 capabilities 外
+要求 bearer token（auth.py），每次 allow/deny 落 access_audit。
+ingest/offline_analysis 两个 flag 分别控制导入与分析面（可独立关闭）。
+错误一律走预算内 error 投影（code 大写化 + 安全 message）。
 """
 
 from __future__ import annotations
 
 import sqlite3
 from pathlib import Path
+from typing import Optional
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from oido import providers
+from oido.auth import ANONYMOUS_PATHS, AuthError, audit, token_from_env, verify_bearer
 from oido.config import OidoConfig
+from oido.prosody import projections
+from oido.prosody.projections import ProjectionError
+from oido.domain.ids import utc_now_rfc3339
+from oido.service.analyses import PROFILES, AnalysisError, AnalysisService
+from oido.service.assets import AssetError, AssetService
+from oido.service.ingest import IngestService, RefError
+from oido.service.variants import VariantService
+from oido.storage.objects import ObjectStore
+from oido.workers import analysis_worker
+
+
+class TranscriptIn(BaseModel):
+    text: str
+    source: str
+    source_revision: Optional[str] = None
+
+
+class AnalyzeIn(BaseModel):
+    audio_ref: str
+    profile: str = "prosody"
+    range_ms: Optional[list[int]] = None
+    idempotency_key: Optional[str] = None
+    wait_ms: int = 0
+
+
+def _error_response(status: int, code: str, message: str, retryable: Optional[bool] = None):
+    try:
+        body = projections.error_body(code.upper().replace("-", "_"), message, retryable=retryable)
+    except ProjectionError:
+        body = {"code": "INTERNAL_ERROR", "message": "error projection failed"}
+    return JSONResponse(body, status_code=status)
 
 
 def create_app(config: OidoConfig | None = None, conn: sqlite3.Connection | None = None) -> FastAPI:
     cfg = config or OidoConfig.from_env()
-    app = FastAPI(title="oido", version="0.1.0")
-    _state = {"conn": conn}
+    app = FastAPI(title="oido", version="0.2.0")
+    token = token_from_env()
 
-    class ErrorBody(BaseModel):
-        code: str
-        message: str
-        retryable: bool = False
+    objects = ObjectStore(cfg.data_root) if conn is not None else None
+    assets = AssetService(conn, objects) if conn is not None and objects else None
+    analyses = AnalysisService(conn) if conn is not None else None
+    variants = VariantService(conn, objects) if conn is not None and objects else None
+    ingest = IngestService(conn, assets) if conn is not None and assets else None
+
+    # ── 鉴权依赖 ────────────────────────────────────────────────────────
+    async def principal_of(request: Request) -> str:
+        try:
+            return verify_bearer(request.headers.get("authorization"), token)
+        except AuthError as exc:
+            audit_deny(conn, request, exc.code)
+            raise HTTPException(401, detail=exc.code) from exc
+
+    def audit_deny(db, request: Request, code: str) -> None:
+        if db is not None:
+            try:
+                audit(db, principal="anonymous", action=str(request.url.path),
+                      object_id=str(request.url.path), decision="deny")
+            except sqlite3.Error:
+                pass
+
+    @app.middleware("http")
+    async def anonymous_paths_open(request: Request, call_next):
+        # ANONYMOUS_PATHS 之外未挂存储 → 503（not_ready），不假装可用
+        return await call_next(request)
 
     @app.get("/health/live")
     def live() -> dict:
@@ -32,23 +90,18 @@ def create_app(config: OidoConfig | None = None, conn: sqlite3.Connection | None
 
     @app.get("/health/ready")
     def ready() -> dict:
-        # R8/F12：按真实迁移版本集合 + 全部业务关键表核对，不拿"列存在"当迁移成功代理
         required_tables = (
             "audio_assets", "audio_origins", "audio_variants", "analysis_runs",
             "analysis_stages", "evidence_items", "artifacts", "events_outbox",
             "idempotency_records", "deletion_tombstones", "acoustic_baselines",
-            "access_audit", "orphan_objects",
+            "access_audit", "orphan_objects", "audio_transcripts",
         )
         db_ok, reason = False, "no_storage"
-        if _state["conn"] is not None:
+        if conn is not None:
             try:
                 from oido.storage.db import expected_versions
 
-                applied = {
-                    r["version"] for r in _state["conn"].execute(
-                        "SELECT version FROM schema_migrations"
-                    )
-                }
+                applied = {r["version"] for r in conn.execute("SELECT version FROM schema_migrations")}
                 expected = expected_versions(cfg.migrations_dir)
                 if not applied:
                     reason = "migrations_empty"
@@ -56,7 +109,7 @@ def create_app(config: OidoConfig | None = None, conn: sqlite3.Connection | None
                     reason = f"migrations_mismatch:missing={sorted(expected - applied)}"
                 else:
                     present = {
-                        r["name"] for r in _state["conn"].execute(
+                        r["name"] for r in conn.execute(
                             "SELECT name FROM sqlite_master WHERE type = 'table'"
                         )
                     }
@@ -64,13 +117,7 @@ def create_app(config: OidoConfig | None = None, conn: sqlite3.Connection | None
                     if missing:
                         reason = f"missing_tables:{','.join(missing)}"
                     else:
-                        # O1：恢复关键列检查——版本账本与表都在，不代表列没被
-                        # 错误还原弄丢（结构损坏时代价低，值得多这一道）
-                        cols = {
-                            r["name"] for r in _state["conn"].execute(
-                                "PRAGMA table_info(analysis_runs)"
-                            )
-                        }
+                        cols = {r["name"] for r in conn.execute("PRAGMA table_info(analysis_runs)")}
                         if "request_json" not in cols:
                             reason = "missing_column:analysis_runs.request_json"
                         else:
@@ -82,14 +129,185 @@ def create_app(config: OidoConfig | None = None, conn: sqlite3.Connection | None
 
     @app.get("/v1/capabilities")
     def caps() -> dict:
-        # 如实报告：not_configured 不是 available（EXEC §4.1）
         return {"providers": providers.capabilities(), "flags": cfg.flags}
 
+    # ── 受信导入（est 宿主推送；metadata 与字节分开发送） ────────────────
+    @app.post("/v1/audio:ingest")
+    async def audio_ingest(request: Request):
+        principal = await principal_of(request)
+        if conn is None or ingest is None:
+            return _error_response(503, "NOT_READY", "storage not attached")
+        if not cfg.enabled("ingest"):
+            audit(conn, principal=principal, action="ingest", object_id="-", decision="deny")
+            return _error_response(503, "SERVICE_DISABLED", "ingest flag is off", retryable=True)
+        ref = request.headers.get("x-oido-audio-ref", "")
+        sha = request.headers.get("x-oido-content-sha256") or None
+        mime = request.headers.get("x-oido-mime") or None
+        data = await request.body()
+        try:
+            result = ingest.ingest(
+                principal=principal, audio_ref=ref, data=data,
+                content_sha256=sha, mime=mime,
+            )
+            audit(conn, principal=principal, action="ingest", object_id=result["audio_id"], decision="allow")
+            return result
+        except RefError as exc:
+            audit(conn, principal=principal, action="ingest", object_id=ref, decision="deny")
+            return _error_response(exc.http_status, exc.code, str(exc))
+        except AssetError as exc:
+            audit(conn, principal=principal, action="ingest", object_id=ref, decision="deny")
+            return _error_response(400, exc.code, str(exc))
+
+    @app.post("/v1/audio/{audio_id}/transcript")
+    async def audio_transcript(audio_id: str, body: TranscriptIn, request: Request):
+        principal = await principal_of(request)
+        if conn is None or ingest is None:
+            return _error_response(503, "NOT_READY", "storage not attached")
+        if not cfg.enabled("ingest"):
+            return _error_response(503, "SERVICE_DISABLED", "ingest flag is off", retryable=True)
+        try:
+            assets.get(audio_id, principal=principal)
+        except AssetError as exc:
+            audit(conn, principal=principal, action="transcript", object_id=audio_id, decision="deny")
+            return _error_response(404, exc.code, str(exc))
+        if not body.text.strip():
+            return _error_response(422, "INVALID_INPUT", "transcript.text must be non-empty")
+        try:
+            conn.execute(
+                """INSERT INTO audio_transcripts (audio_id, text, source, source_revision, created_at)
+                   VALUES (?, ?, ?, ?, ?)""",
+                (audio_id, body.text, body.source, body.source_revision, utc_now_rfc3339()),
+            )
+            conn.commit()
+        except sqlite3.IntegrityError:
+            conn.rollback()
+            return _error_response(409, "ALREADY_EXISTS", "transcript already set; revisions not supported here")
+        audit(conn, principal=principal, action="transcript", object_id=audio_id, decision="allow")
+        return {"audio_id": audio_id, "stored": True}
+
     @app.get("/v1/audio/{audio_id}")
-    def audio(audio_id: str) -> dict:
-        if _state["conn"] is None:
-            raise HTTPException(503, {"code": "not_ready", "message": "storage not attached"})
-        raise HTTPException(501, {"code": "not_implemented",
-                                  "message": "audio metadata endpoint lands with WP02 ingest"})
+    async def audio_meta(audio_id: str, request: Request):
+        principal = await principal_of(request)
+        if conn is None or assets is None:
+            return _error_response(503, "NOT_READY", "storage not attached")
+        try:
+            row = assets.get(audio_id, principal=principal)
+        except AssetError as exc:
+            audit(conn, principal=principal, action="read", object_id=audio_id, decision="deny")
+            return _error_response(404, exc.code, str(exc))
+        audit(conn, principal=principal, action="read", object_id=audio_id, decision="allow")
+        return {
+            "audio_id": row["audio_id"], "lifecycle": row["lifecycle"],
+            "media_mime": row["media_mime"], "bytes": row["bytes"],
+            "sha256": row["sha256"], "created_at": row["created_at"],
+        }
+
+    @app.delete("/v1/audio/{audio_id}")
+    async def audio_delete(audio_id: str, request: Request):
+        principal = await principal_of(request)
+        if conn is None or assets is None:
+            return _error_response(503, "NOT_READY", "storage not attached")
+        try:
+            state = assets.request_delete(audio_id, principal=principal)
+        except AssetError as exc:
+            audit(conn, principal=principal, action="delete", object_id=audio_id, decision="deny")
+            return _error_response(403, exc.code, str(exc))
+        audit(conn, principal=principal, action="delete", object_id=audio_id, decision="allow")
+        return {"audio_id": audio_id, "lifecycle": state}
+
+    # ── 分析 ────────────────────────────────────────────────────────────
+    @app.post("/v1/analyses")
+    async def create_analysis(body: AnalyzeIn, request: Request):
+        principal = await principal_of(request)
+        if conn is None or analyses is None or ingest is None or variants is None:
+            return _error_response(503, "NOT_READY", "storage not attached")
+        if not cfg.enabled("offline_analysis"):
+            audit(conn, principal=principal, action="analyze", object_id=body.audio_ref, decision="deny")
+            return _error_response(503, "SERVICE_DISABLED", "offline_analysis flag is off", retryable=True)
+        if body.profile not in PROFILES:
+            return _error_response(422, "INVALID_PROFILE", f"unknown profile: {body.profile}")
+        try:
+            audio_id = ingest.resolve(body.audio_ref, principal=principal)
+            range_ = None
+            if body.range_ms is not None:
+                if (len(body.range_ms) != 2 or body.range_ms[0] < 0
+                        or body.range_ms[1] <= body.range_ms[0]):
+                    return _error_response(422, "INVALID_RANGE", "range_ms must be [start,end) with 0<=start<end")
+                range_ = {"start_ms": body.range_ms[0], "end_ms": body.range_ms[1]}
+            created = analyses.create(
+                audio_id=audio_id, profile=body.profile, requested_by=principal,
+                idempotency_key=body.idempotency_key, range_=range_,
+            )
+            audit(conn, principal=principal, action="analyze", object_id=created["analysis_id"], decision="allow")
+        except RefError as exc:
+            audit(conn, principal=principal, action="analyze", object_id=body.audio_ref, decision="deny")
+            return _error_response(exc.http_status, exc.code, str(exc))
+        except AnalysisError as exc:
+            audit(conn, principal=principal, action="analyze", object_id=body.audio_ref, decision="deny")
+            return _error_response(exc.http_status, exc.code, str(exc))
+        if body.wait_ms > 0:
+            analysis_worker.process_one(
+                conn=conn, analyses=analyses, variants=variants, ingest=ingest,
+                objects=objects, analysis_id=created["analysis_id"],
+            )
+            run = analyses.get(created["analysis_id"], principal=principal)
+            if run["status"] in ("succeeded", "partial"):
+                facts = analysis_worker.load_facts(conn, created["analysis_id"])
+                if facts is not None:
+                    return projections.evidence_overview(
+                        analysis_id=created["analysis_id"], revision=run["revision"], facts=facts)
+            if run["status"] == "failed":
+                return _error_response(422, "ANALYSIS_FAILED", run.get("error_code") or "pipeline_failed")
+        state = "running" if analyses.get(created["analysis_id"], principal=principal)["status"] == "running" else "queued"
+        return projections.analysis_ticket(created["analysis_id"], state)
+
+    @app.get("/v1/analyses/{analysis_id}")
+    async def get_overview(analysis_id: str, request: Request):
+        principal = await principal_of(request)
+        if conn is None or analyses is None:
+            return _error_response(503, "NOT_READY", "storage not attached")
+        try:
+            run = analyses.get(analysis_id, principal=principal)
+        except AnalysisError as exc:
+            return _error_response(exc.http_status, exc.code, str(exc))
+        if run["status"] not in ("succeeded", "partial"):
+            return _error_response(409, "NOT_READY_YET", f"analysis is {run['status']}", retryable=True)
+        facts = analysis_worker.load_facts(conn, analysis_id)
+        if facts is None:
+            return _error_response(500, "FACTS_MISSING", "terminal run has no facts artifact")
+        audit(conn, principal=principal, action="get", object_id=analysis_id, decision="allow")
+        return projections.evidence_overview(
+            analysis_id=analysis_id, revision=run["revision"], facts=facts)
+
+    @app.get("/v1/analyses/{analysis_id}/prosody")
+    async def get_page(analysis_id: str, request: Request, cursor: Optional[str] = None):
+        principal = await principal_of(request)
+        if conn is None or analyses is None:
+            return _error_response(503, "NOT_READY", "storage not attached")
+        try:
+            run = analyses.get(analysis_id, principal=principal)
+        except AnalysisError as exc:
+            return _error_response(exc.http_status, exc.code, str(exc))
+        if run["status"] not in ("succeeded", "partial"):
+            return _error_response(409, "NOT_READY_YET", f"analysis is {run['status']}", retryable=True)
+        facts = analysis_worker.load_facts(conn, analysis_id)
+        if facts is None:
+            return _error_response(500, "FACTS_MISSING", "terminal run has no facts artifact")
+        audit(conn, principal=principal, action="get_page", object_id=analysis_id, decision="allow")
+        try:
+            return projections.prosody_page(
+                analysis_id=analysis_id, revision=run["revision"], facts=facts, cursor=cursor)
+        except ProjectionError as exc:
+            return _error_response(_projection_status(exc.code), exc.code, str(exc))
 
     return app
+
+
+def _projection_status(code: str) -> int:
+    if code in ("NO_CHAR_ALIGNMENT",):
+        return 409
+    if code in ("INVALID_CURSOR",):
+        return 422
+    if code == "SNAPSHOT_CHANGED":
+        return 409
+    return 422

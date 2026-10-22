@@ -8,6 +8,7 @@ dependencies = [
     "scipy",
     "librosa",
     "soundfile",
+    "pypinyin>=0.53,<1",
     "fastapi",
     "uvicorn",
     "jsonschema",
