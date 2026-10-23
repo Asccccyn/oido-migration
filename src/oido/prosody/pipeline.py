@@ -152,7 +152,7 @@ def run_prosody(
             if seg_db.size < 3:
                 centers.append((seg.start_s + seg.end_s) / 2)
                 continue
-            peaks = _energy_peaks(seg_db, rms_hop_s)
+            peaks = _merge_peak_clusters(_energy_peaks(seg_db, rms_hop_s), seg_db, rms_hop_s)
             for p in peaks:
                 centers.append(seg.start_s + p)
         if not units_raw:
@@ -253,8 +253,13 @@ def run_prosody(
             phrase_tone = "measured_low_confidence"
         else:
             phrase_tone = None
-    if units and phrase_tone is None:
+    if units and phrase_tone is None and len(units) >= 2:
+        # ≥2 单元仍无可靠句级走势 → 如实降级（带 stage，partial 一致性可提交）；
+        # 单元=1 的短语没有"句级"可言，不算未解析
         limits.append("phrase_tone_unresolved")
+        stages.append({"capability": "phrase_tone", "status": "partial",
+                       "reason_code": "insufficient_signal",
+                       "detail": {"reason": "phrase_tone_unresolved"}})
 
     status = "succeeded" if not limits else "partial"
     if not voiced_f0 and not segs.voiced:
@@ -280,6 +285,30 @@ def run_prosody(
         "downmix_note": "mean_of_channels; phase-cancellation not compensated",
     }
     return ProsodyResult(status=status, stages=stages, evidence=evidence, facts=facts)
+
+
+# 音节内峰簇合并窗：双元音/谐波拍频会让一个音节出多个能量峰（实测 3 音节合成信号
+# 出 9 峰）；按最近峰距 <120ms 聚簇、留簇内最强峰——音节核间距（150-300ms）远大于此。
+SYLLABLE_INTRA_GAP_S = 0.12
+
+
+def _merge_peak_clusters(peaks: list[float], seg_db: np.ndarray, hop_s: float) -> list[float]:
+    if len(peaks) <= 1:
+        return peaks
+
+    def amp(t_s: float) -> float:
+        return float(seg_db[min(len(seg_db) - 1, int(round(t_s / hop_s)))]) if seg_db.size else 0.0
+
+    merged: list[float] = []
+    cluster: list[float] = [peaks[0]]
+    for prev, cur in zip(peaks, peaks[1:]):
+        if cur - prev < SYLLABLE_INTRA_GAP_S:
+            cluster.append(cur)
+        else:
+            merged.append(max(cluster, key=amp))
+            cluster = [cur]
+    merged.append(max(cluster, key=amp))
+    return merged
 
 
 def _energy_peaks(seg_db: np.ndarray, hop_s: float, *, min_prominence_db: float = 3.0) -> list[float]:

@@ -85,13 +85,19 @@ class TestMcpStdio:
         body = json.loads(resp["result"]["content"][0]["text"])
         assert body["code"] == "NOT_VISIBLE"
 
-    def test_view_not_implemented_honest(self, server_proc):
+    def test_view_and_find_wired(self, server_proc):
+        # view/find 已实装：对不存在的分析/资产走正常错误通道（不再是 NOT_IMPLEMENTED）
         resp = _rpc(server_proc, {"jsonrpc": "2.0", "id": 5, "method": "tools/call",
                                   "params": {"name": "oido_view",
-                                             "arguments": {"analysis_id": "run_x", "view": "pitch"}}})
+                                             "arguments": {"analysis_id": "run_missing", "view": "pitch"}}})
         assert resp["result"]["isError"] is True
         body = json.loads(resp["result"]["content"][0]["text"])
-        assert body["code"] == "NOT_IMPLEMENTED"
+        assert body["code"] == "NOT_VISIBLE"
+        resp2 = _rpc(server_proc, {"jsonrpc": "2.0", "id": 7, "method": "tools/call",
+                                   "params": {"name": "oido_find",
+                                              "arguments": {"audio_ref": "est:none", "query": "啊"}}})
+        assert resp2["result"]["isError"] is True
+        assert json.loads(resp2["result"]["content"][0]["text"])["code"] == "NOT_VISIBLE"
 
     def test_notification_no_response(self, server_proc):
         proc = server_proc

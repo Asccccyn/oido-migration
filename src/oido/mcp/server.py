@@ -29,8 +29,8 @@ from oido.storage.objects import ObjectStore
 from oido.workers import analysis_worker
 
 _CONTRACT = Path(__file__).resolve().parents[3] / "contracts" / "mcp-tools.v2.json"
-IMPLEMENTED = {"oido_capabilities", "oido_analyze", "oido_get"}
-NOT_IMPLEMENTED = {"oido_view", "oido_find", "oido_compare"}
+IMPLEMENTED = {"oido_capabilities", "oido_analyze", "oido_get",
+               "oido_view", "oido_find", "oido_compare"}
 PROTOCOL_VERSION = "2024-11-05"
 
 
@@ -46,6 +46,12 @@ class _Ctx:
         self.analyses = AnalysisService(self.conn)
         self.variants = VariantService(self.conn, self.objects)
         self.ingest = IngestService(self.conn, self.assets)
+        from oido.service.compare import CompareService
+        from oido.service.find import FindService
+        from oido.service.views import ViewService
+        self.views = ViewService(self.conn, self.variants, self.objects)
+        self.finder = FindService(self.analyses, self.ingest)
+        self.comparer = CompareService(self.analyses, self.ingest)
 
 
 def _tool_list() -> list[dict]:
@@ -130,9 +136,39 @@ def _call_tool(name: str, args: dict, ctx: _Ctx) -> dict:
                 return projections.error_body(exc.code, str(exc))
         return projections.evidence_overview(
             analysis_id=analysis_id, revision=run["revision"], facts=facts)
-    if name in NOT_IMPLEMENTED:
-        # 如实未实装：走 isError 通道（工具级失败），不拿空成功冒充
-        raise RefError("not_implemented", f"{name} is not implemented in this round")
+    if name == "oido_view":
+        analysis_id = args.get("analysis_id")
+        view = args.get("view", "overview")
+        if not isinstance(analysis_id, str) or not analysis_id:
+            raise RefError("invalid_input", "analysis_id is required")
+        rng = args.get("range_ms")
+        if rng is not None and not (isinstance(rng, list) and len(rng) == 2
+                                    and all(isinstance(v, int) for v in rng)):
+            raise RefError("invalid_input", "range_ms must be [start,end)")
+        run = ctx.analyses.get(analysis_id, principal="est")
+        if run["status"] not in ("succeeded", "partial"):
+            return projections.error_body("NOT_READY_YET", f"analysis is {run['status']}", retryable=True)
+        out = ctx.views.render(analysis_id=analysis_id, view=view, range_ms=rng)
+        return {"__image_content__": out["artifact_id"], "__png_b64__": __import__("base64").b64encode(out["png"]).decode(),
+                "analysis_id": analysis_id, "view": view, "revision": run["revision"],
+                "artifact_id": out["artifact_id"], "media_type": "image/png"}
+    if name == "oido_find":
+        return ctx.finder.find(
+            principal="est", audio_ref=_resolve_ref_arg(args, ctx),
+            query=str(args.get("query", "")), mode=str(args.get("mode", "substring")),
+            limit=int(args.get("limit", 3)) if isinstance(args.get("limit", 3), int) else 3)
+    if name == "oido_compare":
+        left, right = args.get("left"), args.get("right")
+        if not isinstance(left, dict) or not isinstance(right, dict):
+            raise RefError("invalid_input", "left/right objects required")
+        for side in (left, right):
+            if isinstance(side.get("audio_ref"), str):
+                side["audio_ref"] = _resolve_ref_arg(side | {"audio_ref": side["audio_ref"]}, ctx)
+            elif isinstance(side.get("audio_id"), str):
+                side["audio_ref"] = _resolve_ref_arg(side, ctx)
+        return ctx.comparer.compare(
+            principal="est", left=left, right=right,
+            metrics=args.get("metrics") if isinstance(args.get("metrics"), list) else None)
     raise RefError("unknown_tool", f"unknown tool: {name}")
 
 
@@ -160,6 +196,17 @@ def handle_message(msg: dict, ctx: Optional[_Ctx] = None) -> Optional[dict]:
             if ctx is None:
                 ctx = _Ctx()
             output = _call_tool(name, args, ctx)
+            if isinstance(output, dict) and "__png_b64__" in output:
+                png_b64 = output.pop("__png_b64__")
+                output.pop("__image_content__", None)
+                text = json.dumps(output, ensure_ascii=False, separators=(",", ":"), allow_nan=False)
+                return {"jsonrpc": "2.0", "id": msg_id, "result": {
+                    "content": [
+                        {"type": "image", "data": png_b64, "mimeType": "image/png"},
+                        {"type": "text", "text": text},
+                    ],
+                    "isError": False,
+                }}
             text = json.dumps(output, ensure_ascii=False, separators=(",", ":"), allow_nan=False)
             return {"jsonrpc": "2.0", "id": msg_id, "result": {
                 "content": [{"type": "text", "text": text}],

@@ -62,6 +62,17 @@ def create_app(config: OidoConfig | None = None, conn: sqlite3.Connection | None
     analyses = AnalysisService(conn) if conn is not None else None
     variants = VariantService(conn, objects) if conn is not None and objects else None
     ingest = IngestService(conn, assets) if conn is not None and assets else None
+    views = None
+    finder = None
+    comparer = None
+    if conn is not None and analyses is not None and ingest is not None:
+        from oido.service.compare import CompareService
+        from oido.service.find import FindService
+        from oido.service.views import ViewService
+        if variants is not None and objects is not None:
+            views = ViewService(conn, variants, objects)
+        finder = FindService(analyses, ingest)
+        comparer = CompareService(analyses, ingest)
 
     # ── 鉴权依赖 ────────────────────────────────────────────────────────
     async def principal_of(request: Request) -> str:
@@ -299,6 +310,79 @@ def create_app(config: OidoConfig | None = None, conn: sqlite3.Connection | None
                 analysis_id=analysis_id, revision=run["revision"], facts=facts, cursor=cursor)
         except ProjectionError as exc:
             return _error_response(_projection_status(exc.code), exc.code, str(exc))
+
+    # ── view / find / compare（JOINT-VOICE 收尾三工具） ──────────────────
+    @app.get("/v1/analyses/{analysis_id}/view")
+    async def get_view(analysis_id: str, request: Request, view: str = "overview", range_ms: Optional[str] = None):
+        from fastapi import Response as FastResponse
+        from oido.dsp.render import RenderError
+
+        principal = await principal_of(request)
+        if views is None:
+            return _error_response(503, "NOT_READY", "storage not attached")
+        try:
+            run = analyses.get(analysis_id, principal=principal)
+        except AnalysisError as exc:
+            return _error_response(exc.http_status, exc.code, str(exc))
+        rng = None
+        if range_ms:
+            parts = range_ms.split(",")
+            try:
+                rng = [int(parts[0]), int(parts[1])] if len(parts) == 2 else None
+                if rng is not None and not (0 <= rng[0] < rng[1]):
+                    rng = None
+            except ValueError:
+                rng = None
+            if rng is None:
+                return _error_response(422, "INVALID_RANGE", "range_ms must be start,end")
+        try:
+            out = views.render(analysis_id=analysis_id, view=view, range_ms=rng)
+        except RenderError as exc:
+            return _error_response(422, exc.reason_code.upper(), str(exc))
+        audit(conn, principal=principal, action="view", object_id=analysis_id, decision="allow")
+        return FastResponse(out["png"], media_type="image/png", headers={
+            "X-Oido-Artifact-Id": out["artifact_id"], "X-Oido-View": view})
+
+    @app.post("/v1/find")
+    async def find_audio(body: dict, request: Request):
+        principal = await principal_of(request)
+        if finder is None:
+            return _error_response(503, "NOT_READY", "storage not attached")
+        if not cfg.enabled("offline_analysis"):
+            return _error_response(503, "SERVICE_DISABLED", "offline_analysis flag is off", retryable=True)
+        try:
+            out = finder.find(
+                principal=principal, audio_ref=str(body.get("audio_ref", "")),
+                query=str(body.get("query", "")),
+                mode=str(body.get("mode", "substring")),
+                limit=int(body.get("limit", 3)))
+        except AnalysisError as exc:
+            audit(conn, principal=principal, action="find", object_id=str(body.get("audio_ref", "-")), decision="deny")
+            return _error_response(exc.http_status, exc.code, str(exc))
+        except (TypeError, ValueError):
+            return _error_response(422, "INVALID_INPUT", "bad find request")
+        audit(conn, principal=principal, action="find", object_id=out["audio_ref"], decision="allow")
+        return out
+
+    @app.post("/v1/compare")
+    async def compare_audio(body: dict, request: Request):
+        principal = await principal_of(request)
+        if comparer is None:
+            return _error_response(503, "NOT_READY", "storage not attached")
+        left, right = body.get("left"), body.get("right")
+        if not isinstance(left, dict) or not isinstance(right, dict):
+            return _error_response(422, "INVALID_INPUT", "left/right objects required")
+        try:
+            out = comparer.compare(
+                principal=principal, left=left, right=right,
+                metrics=body.get("metrics") if isinstance(body.get("metrics"), list) else None)
+        except AnalysisError as exc:
+            audit(conn, principal=principal, action="compare",
+                  object_id=str(left.get("audio_ref", "-")), decision="deny")
+            return _error_response(exc.http_status, exc.code, str(exc))
+        audit(conn, principal=principal, action="compare",
+              object_id=f"{left.get('audio_ref')}|{right.get('audio_ref')}", decision="allow")
+        return out
 
     return app
 
