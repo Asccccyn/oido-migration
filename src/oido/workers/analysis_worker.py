@@ -75,7 +75,20 @@ def process_one(
         if _cancelled():
             return None
         samples = variants.load_pcm(variant)
+        # RE-13e（2026-10-24 返修）：昂贵阶段入口检查点——PCM 装载后取消已发生则不启动
+        # 新 DSP 段（在途段不可抢占如实声明；迟到提交由 fence 拒）
+        if _cancelled():
+            return None
         transcript = ingest.transcript_of(audio_id)
+        # RE-14e（2026-10-24 返修）：执行输入=排队时的转写快照——当前转写内容 hash 与请求
+        # 记录不一致（排队后新转写到达/被改）时拒绝执行，如实失败；重新分析=新请求新 digest
+        import hashlib as _hashlib
+        _current_hash = "no-transcript" if transcript is None else _hashlib.sha256(transcript["text"].encode("utf-8")).hexdigest()
+        _requested_hash = lease["request"].get("transcript_sha256")
+        if _requested_hash is not None and _requested_hash != _current_hash:
+            return _fail(conn, analyses, analysis_id, lease["fencing_token"],
+                         "transcript_changed",
+                         "transcript changed after this analysis was queued; submit a new analysis for the new version")
         requested_range = lease["request"].get("range")
         start_sample, end_sample = 0, len(samples)
         if requested_range is not None:

@@ -16,6 +16,7 @@ LINK_STATES = ("pending", "active", "revoking", "revoked", "failed")
 
 REASON_CODES = (
     "policy_denied",
+    "transcript_changed",  # RE-14e（2026-10-24）：排队后转写变化——拒绝执行（非静默换输入）
     "provider_not_configured",
     "unsupported",
     "insufficient_signal",

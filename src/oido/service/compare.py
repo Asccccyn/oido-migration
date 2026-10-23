@@ -50,7 +50,12 @@ class CompareService:
             ),
         }
         if range_ms is not None:
-            if len(range_ms) != 2 or range_ms[0] < 0 or range_ms[1] <= range_ms[0]:
+            # RE-14c（2026-10-24 返修）：嵌套 range 类型先于域校验（上轮 ["x","y"] 在
+            # 比较 0 时抛 TypeError→500；非法输入一律 422）
+            if (not isinstance(range_ms, list) or len(range_ms) != 2
+                    or any(type(v) is not int for v in range_ms)):
+                raise AnalysisError("invalid_input", "range_ms must be [start,end) integer ms", 422)
+            if range_ms[0] < 0 or range_ms[1] <= range_ms[0]:
                 raise AnalysisError("invalid_input", "range_ms must be [start,end) ms", 422)
             a, b = range_ms[0] / 1000.0, range_ms[1] / 1000.0
             source_range = facts.get("range_ms") or [0, round(facts["duration_s"] * 1000)]

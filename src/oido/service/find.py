@@ -75,9 +75,13 @@ class FindService:
         i = 0
         skip = 0
         skip_total = 0  # R6′：本页之前已交付的命中总数（游标续页基数）
+        truncated = False  # RE-14a：命中数达 limit 中断（末页无更多命中时不发假游标）
         if cursor:
             try:
-                decoded = _json.loads(base64.urlsafe_b64decode(cursor))
+                # RE-14a（2026-10-24 返修）：服务端签发的 cursor 可直接消费——补齐
+                # base64 padding 缺失（上轮反例：自签游标第二页 422 "not readable"）
+                padded = cursor + "=" * (-len(cursor) % 4)
+                decoded = _json.loads(base64.urlsafe_b64decode(padded))
             except Exception:
                 raise AnalysisError("invalid_cursor", "cursor is not readable", 422)
             if (decoded.get("a") != row["analysis_id"] or decoded.get("r") != row["revision"]
@@ -101,6 +105,7 @@ class FindService:
                     "match": window,
                 })
                 if len(hits) >= limit:
+                    truncated = True
                     break
                 i += max(1, m)  # 不重叠推进
             else:
@@ -114,9 +119,19 @@ class FindService:
             "limits": ["unaligned"] if facts.get("alignment_source") else [],
         }
         # R6′（2026-10-23）：命中截断时给 next_cursor（命中流偏移，绑定 analysis+revision+
-        # query hash——换分析/换查询=游标失效如实报）；无截断不带（读尽即止）
-        if len(hits) >= limit and i < n - m + 1:
-            import base64, json as _json
+        # query hash——换分析/换查询=游标失效如实报）；无截断不带（读尽即止）。
+        # RE-14a（2026-10-24 返修）：截断≠必有续页——向前扫描确认仍有命中才签游标
+        #（上轮反例：恰好在末条命中处达 limit 也发了假 next_cursor）
+        _more = False
+        if truncated:
+            _j = i + max(1, m)  # 越过刚交付的末条命中再向前扫描（i 停在其起点）
+            while _j <= n - m:
+                _w = seq[_j:_j + m]
+                if _w == q if mode == "substring" else _fuzzy_eq(_w, q):
+                    _more = True
+                    break
+                _j += 1
+        if _more:
             result["next_cursor"] = base64.urlsafe_b64encode(_json.dumps({
                 "a": row["analysis_id"], "r": row["revision"],
                 "q": hashlib.sha256(q.encode()).hexdigest()[:16], "skip": skip_total + len(hits),

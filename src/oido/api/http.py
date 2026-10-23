@@ -8,6 +8,7 @@ ingest/offline_analysis 两个 flag 分别控制导入与分析面（可独立�
 
 from __future__ import annotations
 
+import asyncio
 import sqlite3
 from pathlib import Path
 from typing import Literal, Optional
@@ -290,14 +291,15 @@ def create_app(config: OidoConfig | None = None, conn: sqlite3.Connection | None
             # 到限未完成=返回票据（不再内联跑完 DSP）；无执行器（测试/MCP stdio）维持同步内联。
             from oido.workers.executor import EXECUTOR_ACTIVE
             if EXECUTOR_ACTIVE:
-                import time as _time
-                deadline = _time.monotonic() + body.wait_ms / 1000.0
-                while _time.monotonic() < deadline:
+                # RE-13a（2026-10-24 返修）：async 等待让出事件循环（上轮 time.sleep 阻塞
+                # 整个 ASGI——health/cancel 全被占住）
+                deadline = asyncio.get_running_loop().time() + body.wait_ms / 1000.0
+                while asyncio.get_running_loop().time() < deadline:
                     if analyses.get(created["analysis_id"], principal=principal)["status"] in (
                         "succeeded", "partial", "failed", "cancelled",
                     ):
                         break
-                    _time.sleep(0.05)
+                    await asyncio.sleep(0.05)
             else:
                 analysis_worker.process_one(
                     conn=conn, analyses=analyses, variants=variants, ingest=ingest,
@@ -311,7 +313,19 @@ def create_app(config: OidoConfig | None = None, conn: sqlite3.Connection | None
                         analysis_id=created["analysis_id"], revision=run["revision"], facts=facts)
             if run["status"] == "failed":
                 return _error_response(422, "ANALYSIS_FAILED", run.get("error_code") or "pipeline_failed")
-        state = "running" if analyses.get(created["analysis_id"], principal=principal)["status"] == "running" else "queued"
+        # RE-13d（2026-10-24 返修）：wait_ms=0（或等待提前完成）时按 DB 权威状态收口——
+        # 已完成幂等任务返回概览（ready/partial），不再一律报 queued（上轮反例）
+        run_now = analyses.get(created["analysis_id"], principal=principal)
+        if run_now["status"] in ("succeeded", "partial"):
+            facts = analysis_worker.load_facts(conn, created["analysis_id"])
+            if facts is not None:
+                return projections.evidence_overview(
+                    analysis_id=created["analysis_id"], revision=run_now["revision"], facts=facts)
+        if run_now["status"] == "failed":
+            return _error_response(422, "ANALYSIS_FAILED", run_now.get("error_code") or "pipeline_failed")
+        if run_now["status"] == "cancelled":
+            return {"analysis_id": created["analysis_id"], "state": "cancelled"}
+        state = "running" if run_now["status"] == "running" else "queued"
         return projections.analysis_ticket(created["analysis_id"], state)
 
     @app.post("/v1/analyses/{analysis_id}/cancel")
@@ -329,7 +343,10 @@ def create_app(config: OidoConfig | None = None, conn: sqlite3.Connection | None
             return {"analysis_id": analysis_id, "status": run["status"], "cancelled": run["status"] == "cancelled"}
         analyses.cancel(analysis_id, principal=principal)
         audit(conn, principal=principal, action="cancel", object_id=analysis_id, decision="allow")
-        return {"analysis_id": analysis_id, "status": "cancelled", "cancelled": True}
+        # RE-13b（2026-10-24 返修）：取消与完成竞争时以 DB 权威状态回答——
+        # commit 已先行则如实报 succeeded（cancelled=false），不谎报取消成功
+        final = analyses.get(analysis_id, principal=principal)["status"]
+        return {"analysis_id": analysis_id, "status": final, "cancelled": final == "cancelled"}
 
     @app.get("/v1/analyses/{analysis_id}")
     async def get_overview(analysis_id: str, request: Request):
@@ -340,6 +357,11 @@ def create_app(config: OidoConfig | None = None, conn: sqlite3.Connection | None
             run = analyses.get(analysis_id, principal=principal)
         except AnalysisError as exc:
             return _error_response(exc.http_status, exc.code, str(exc))
+        if run["status"] == "failed":
+            # RE-13c（2026-10-24 返修）：终态不再伪 409 retryable——失败=确定，取消=确定
+            return _error_response(422, "ANALYSIS_FAILED", run.get("error_code") or "pipeline_failed")
+        if run["status"] == "cancelled":
+            return {"analysis_id": analysis_id, "state": "cancelled"}
         if run["status"] not in ("succeeded", "partial"):
             return _error_response(409, "NOT_READY_YET", f"analysis is {run['status']}", retryable=True)
         facts = analysis_worker.load_facts(conn, analysis_id)
@@ -358,6 +380,11 @@ def create_app(config: OidoConfig | None = None, conn: sqlite3.Connection | None
             run = analyses.get(analysis_id, principal=principal)
         except AnalysisError as exc:
             return _error_response(exc.http_status, exc.code, str(exc))
+        if run["status"] == "failed":
+            # RE-13c（2026-10-24 返修）：终态不再伪 409 retryable——失败=确定，取消=确定
+            return _error_response(422, "ANALYSIS_FAILED", run.get("error_code") or "pipeline_failed")
+        if run["status"] == "cancelled":
+            return {"analysis_id": analysis_id, "state": "cancelled"}
         if run["status"] not in ("succeeded", "partial"):
             return _error_response(409, "NOT_READY_YET", f"analysis is {run['status']}", retryable=True)
         facts = analysis_worker.load_facts(conn, analysis_id)
@@ -445,6 +472,12 @@ def create_app(config: OidoConfig | None = None, conn: sqlite3.Connection | None
             return _error_response(exc.http_status, exc.code, str(exc))
         except RefError as exc:
             return _error_response(exc.http_status, exc.code, str(exc))
+        except ProjectionError as exc:
+            # RE-14c（2026-10-24 返修）：超预算=合同内合法小错误（422 BUDGET_EXCEEDED），
+            # 不再裸 500（上轮 30 metrics 触发未捕获 ProjectionError）
+            return _error_response(422, exc.code, "result exceeds budget; request fewer metrics or narrower ranges")
+        except (TypeError, ValueError) as exc:
+            return _error_response(422, "INVALID_INPUT", f"bad compare request: {exc}")
         audit(conn, principal=principal, action="compare",
               object_id=f"{left.get('audio_ref')}|{right.get('audio_ref')}", decision="allow")
         return out

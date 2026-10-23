@@ -22,6 +22,11 @@ def _now_rfc3339() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def _now_rfc3339_minus(seconds: float) -> str:
+    # RE-14（2026-10-24 返修）：租约过期判定的时间下界（claim_next 依赖；此前未定义——直接调用即 NameError）
+    return (datetime.now(timezone.utc) - timedelta(seconds=seconds)).isoformat()
+
+
 def claim_next(conn: sqlite3.Connection, owner: str, lease_seconds: float = 120.0) -> Optional[str]:
     """语义兼容保留：直接复用 process_one 的领取（queued/租约过期）。"""
     row = conn.execute(
