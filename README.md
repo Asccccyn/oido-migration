@@ -1,5 +1,6 @@
 # oído
 
+- 2026-10-24（隔离分支，未部署）：GLM CallHome 执行轮 B3——RE-13 生命周期（async 等待/取消按 DB 权威/终态非伪 409/wait0 幂等回概览/PCM 后取消不启新段）+RE-14（find 游标真根因=函数内 import 遮蔽、末页无假游标、MCP v2 补 cursor、compare 超预算 422、claim_next 租约函数、转写快照不一致拒执行 transcript_changed）；独立探针 13/14（transcript 快照探针结构性矛盾已记录+补充语义测试 2 绿）；290 绿/1 红（同矛盾项）。
 - 2026-10-23（独立审计隔离分支，未部署）：修复模型回执冗余、MCP schema/开关边界、字节幂等、转写删除、派生物迟到复活、范围裁剪、F0时序与帧尾；保留异步调度/取消/真实宿主与真人评测阻塞。见 `docs/AUDIT_20261023.md`，不将离线通过视作生产验收。
 
 - 2026-10-22（二批，已部署生产）：她批「全做完」——view/find/compare 三工具落地，六工具合同全通：view 五种视图全从真实测量值绘制（PIL+STFT/pYIN；artifacts 幂等复用；range 样本级裁剪；MCP 原生 image content）；find=对齐区间文字匹配（精确/fuzzy；默认3最大10；对齐不可用=409 如实）；compare=已存分析可比量差异+无基线明确拒绝「比平时」。管线质量修复：音节内峰簇合并（<120ms）、单字短语不误标 phrase_tone_unresolved。**249 测试绿**（239+10），生产烟测过（PNG/区间/无基线，烟测数据已清）。commit `d2b76da`。
