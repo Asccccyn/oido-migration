@@ -383,7 +383,8 @@ class TestR08Ready:
         assert body["reason"].startswith("missing_tables")
 
     def test_expected_versions_matches_dir(self):
-        assert expected_versions(REPO / "migrations") == {1, 2, 3}
+        # 0004_audio_transcripts（JOINT-VOICE-20261022）：迁移目录账本随新版本扩展
+        assert expected_versions(REPO / "migrations") == {1, 2, 3, 4}
 
 
 # ── 低优先项：探针 SDK 版本不再 unknown ────────────────────────────────
