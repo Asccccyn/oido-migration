@@ -9,7 +9,7 @@
   python scripts/supervise_tests.py --timeout-seconds 180 --rss-limit-mib 1024 \
       -- python -m pytest -x -q tests/unit/test_timebase.py
 
-退出码：0=子进程正常退出 0；3=RSS 超限击杀；4=超时击杀；其他=透传子进程退出码。
+退出码：0=子进程正常退出 0；3=RSS 超限击杀；4=超时击杀；5=RSS监测不可用；其他=透传子进程退出码。
 必须先通过 --self-test 才允许用于正式验收（EXEC §8.2）。
 """
 
@@ -24,14 +24,14 @@ import time
 
 
 def _tree_rss_kib(pgid: int) -> int:
-    """ps 汇总同 pgid 的全部进程 RSS（KiB）。ps 不可用时返回 0 并由调用方降级。"""
+    """ps 汇总同 pgid 的全部进程 RSS（KiB）。不可观测时失败，不伪造 0。"""
     try:
         out = subprocess.run(
             ["ps", "-A", "-o", "pgid=,rss="],
             capture_output=True, text=True, timeout=10, check=True,
         ).stdout
-    except (subprocess.SubprocessError, OSError):
-        return 0
+    except (subprocess.SubprocessError, OSError) as exc:
+        raise RuntimeError("RSS monitor unavailable: cannot read process group memory") from exc
     total = 0
     for line in out.splitlines():
         parts = line.split()
@@ -60,7 +60,11 @@ def supervise(cmd: list[str], *, timeout_seconds: float, rss_limit_mib: int,
             _signal_group(pgid, signal.SIGKILL, quiet=True)
             return ret
         elapsed = time.monotonic() - started
-        rss = _tree_rss_kib(pgid)
+        try:
+            rss = _tree_rss_kib(pgid)
+        except RuntimeError:
+            reason = "rss-monitor-unavailable: resource limits cannot be enforced"
+            break
         if rss > rss_limit_kib:
             reason = f"rss-exceeded: tree {rss} KiB > limit {rss_limit_kib} KiB after {elapsed:.1f}s"
             break
@@ -77,10 +81,13 @@ def supervise(cmd: list[str], *, timeout_seconds: float, rss_limit_mib: int,
     if proc.poll() is None:
         print(f"[supervise] grace expired; SIGKILL to pgid {pgid}", file=sys.stderr)
         _signal_group(pgid, signal.SIGKILL)
-    killed_rss = _tree_rss_kib(pgid)
+    try:
+        killed_rss = _tree_rss_kib(pgid)
+    except RuntimeError:
+        killed_rss = 1  # still ensure the child group is terminated
     if killed_rss > 0:
         _signal_group(pgid, signal.SIGKILL, quiet=True)
-    return 3 if reason.startswith("rss") else 4
+    return 5 if reason.startswith("rss-monitor") else 3 if reason.startswith("rss-exceeded") else 4
 
 
 def _signal_group(pgid: int, sig: int, *, quiet: bool = False) -> None:

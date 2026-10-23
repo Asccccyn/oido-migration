@@ -65,6 +65,21 @@ def process_one(
         variant = variants.ensure_decode_main(audio_id=audio_id, original_bytes=original)
         samples = variants.load_pcm(variant)
         transcript = ingest.transcript_of(audio_id)
+        requested_range = lease["request"].get("range")
+        start_sample, end_sample = 0, len(samples)
+        if requested_range is not None:
+            if set(requested_range) != {"start_ms", "end_ms"}:
+                raise VariantError("unsupported", "legacy range has no explicit time unit; resubmit range_ms")
+            sr = variant["sample_rate_hz"]
+            start_sample = requested_range["start_ms"] * sr // 1000
+            end_sample = requested_range["end_ms"] * sr // 1000
+            if not 0 <= start_sample < end_sample <= len(samples):
+                raise VariantError("invalid_media", "range exceeds the source audio")
+            samples = samples[start_sample:end_sample]
+            # A whole-recording transcript has no trustworthy word boundaries
+            # for this crop. Do not force its full text onto a shorter signal.
+            if start_sample or end_sample != variant["sample_count"]:
+                transcript = None
         result = run_prosody(
             audio_id=audio_id,
             samples=samples,
@@ -73,6 +88,15 @@ def process_one(
             timebase_id=variant["timebase_id"],
             transcript=transcript,
         )
+        offset_s = start_sample / variant["sample_rate_hz"]
+        result.facts["range_ms"] = [round(start_sample * 1000 / variant["sample_rate_hz"]),
+                                    round(end_sample * 1000 / variant["sample_rate_hz"])]
+        for item in result.facts.get("units", []) + result.facts.get("pauses", []):
+            item["start_s"] += offset_s
+            item["end_s"] += offset_s
+        for evidence in result.evidence:
+            evidence["range"]["start_sample"] += start_sample
+            evidence["range"]["end_sample"] += start_sample
         decode_stage = {"capability": "decode", "status": "succeeded",
                         "detail": {"decode_profile": "pcm_f32le_16000_mono",
                                    "sr": variant["sample_rate_hz"],

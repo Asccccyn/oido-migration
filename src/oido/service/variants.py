@@ -33,8 +33,9 @@ class VariantService:
     def ensure_decode_main(self, *, audio_id: str, original_bytes: bytes) -> dict:
         """取该资产现行 decode_main 变体；没有则解码并持久化（幂等：已有即复用）。"""
         row = self.conn.execute(
-            """SELECT * FROM audio_variants
-               WHERE audio_id = ? AND transform_kind = ? AND parent_variant_id IS NULL""",
+            """SELECT v.* FROM audio_variants v JOIN audio_assets a ON a.audio_id = v.audio_id
+               WHERE v.audio_id = ? AND transform_kind = ? AND parent_variant_id IS NULL
+                 AND a.lifecycle = 'active'""",
             (audio_id, TRANSFORM_KIND),
         ).fetchone()
         if row is not None:
@@ -46,14 +47,22 @@ class VariantService:
         pcm_bytes = result.samples.astype("<f4").tobytes()
         variant_id = new_id("var")
         object_key = f"derivatives/{variant_id}.f32"
-        sha = self.objects.put_bytes(object_key, pcm_bytes)
+        intent = self.conn.execute(
+            """INSERT INTO orphan_objects (object_key, audio_id, owner, created_at)
+               SELECT ?, audio_id, owner, ? FROM audio_assets WHERE audio_id = ? AND lifecycle = 'active'""",
+            (object_key, utc_now_rfc3339(), audio_id))
+        self.conn.commit()
+        if intent.rowcount != 1:
+            raise VariantError("source_unavailable", "audio was deleted during decoding", 404)
         try:
-            self.conn.execute(
+            sha = self.objects.put_bytes(object_key, pcm_bytes)
+            inserted = self.conn.execute(
                 """INSERT INTO audio_variants
                    (variant_id, audio_id, parent_variant_id, transform_kind,
                     sample_rate_hz, channels, sample_count, timebase_id,
                     transform_params, object_key, created_at)
-                   VALUES (?, ?, NULL, ?, ?, 1, ?, ?, ?, ?, ?)""",
+                   SELECT ?, ?, NULL, ?, ?, 1, ?, ?, ?, ?, ?
+                   WHERE EXISTS (SELECT 1 FROM audio_assets WHERE audio_id = ? AND lifecycle = 'active')""",
                 (
                     variant_id,
                     audio_id,
@@ -65,15 +74,23 @@ class VariantService:
                                              sort_keys=True, allow_nan=False),
                     object_key,
                     utc_now_rfc3339(),
+                    audio_id,
                 ),
             )
+            if inserted.rowcount != 1:
+                raise VariantError("source_unavailable", "audio was deleted during decoding", 404)
+            self.conn.execute("DELETE FROM orphan_objects WHERE object_key = ?", (object_key,))
             self.conn.commit()
-        except sqlite3.Error:
+        except Exception:
             self.conn.rollback()
             try:
                 self.objects.delete(object_key)
+                self.conn.execute("DELETE FROM orphan_objects WHERE object_key = ?", (object_key,))
+                self.conn.commit()
             except OSError:
                 pass
+            except sqlite3.Error:
+                self.conn.rollback()
             raise
         return {
             "variant_id": variant_id,

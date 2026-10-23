@@ -7,18 +7,14 @@
 
 from __future__ import annotations
 
-import json
 import math
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any, Optional
 
 import numpy as np
 
-from oido.domain.ids import new_id
-from oido.domain.pitch import PitchReference, semitones, utterance_median_f0
+from oido.domain.pitch import PitchReference, semitones
 from oido.dsp.f0 import pyin_f0, robust_median_f0
-from oido.dsp.rms import rms_dbfs
-from oido.service.variants import VariantService
 
 # RMS 帧化参数（固定策略，随分析产物记录）
 RMS_FRAME = 480          # 16kHz 下 30ms
@@ -80,7 +76,6 @@ def run_prosody(
     timebase_id: str,
     transcript: Optional[dict],
     range_samples: Optional[dict] = None,
-    variant_service: Optional[VariantService] = None,
 ) -> ProsodyResult:
     """在 decode_main 变体上跑 prosody。返回 stages/evidence/facts（不落库，由 worker 提交）。"""
     from oido.dsp.segments import segment_utterance  # 延迟导入：DSP 叶子模块
@@ -116,6 +111,16 @@ def run_prosody(
         rms_db=db,
         rms_hop_s=rms_hop_s,
     )
+    # Frame coverage includes the trailing hop; it must never extend evidence
+    # beyond the decoded asset's exact sample count.
+    duration_s = total_samples / float(sr)
+    clipped_voiced = [type(s)(s.start_s, min(s.end_s, duration_s), s.voiced_ratio)
+                   for s in segs.voiced if s.start_s < duration_s]
+    clipped_pauses = [type(p)(p.start_s, min(p.end_s, duration_s),
+                          (min(p.end_s, duration_s) - p.start_s) * 1000)
+                  for p in segs.pauses if p.start_s < duration_s]
+    segs = replace(segs, voiced=clipped_voiced, pauses=clipped_pauses,
+                   voiced_total_s=sum(s.end_s - s.start_s for s in clipped_voiced))
     stages.append({"capability": "pauses", "status": "succeeded",
                    "detail": {"voiced_segments": len(segs.voiced), "pauses": len(segs.pauses)}})
     for pause in segs.pauses:
@@ -229,31 +234,19 @@ def run_prosody(
         ))
         st_points: list[Optional[float]] = []
         if median_f0 is not None and b > a:
-            f0_unit = pyin_f0(samples[a:b], sr=sr, hop_length=F0_HOP)
-            unit_voiced = [v for v, ok in zip(f0_unit["f0_hz"] or [], f0_unit["voiced"]) if ok and v is not None]
+            # Reuse the measured utterance frames in chronological order. Sorting
+            # pitch values turns every falling contour into an apparent rise.
+            unit_voiced = [v for j, (v, ok) in enumerate(zip(f0_result["f0_hz"] or [], f0_result["voiced"]))
+                           if a <= j * F0_HOP < b and ok and v is not None]
             if unit_voiced:
-                # ≤5 个代表点：等分位取样（中位+四分位）
-                unit_voiced_sorted = sorted(unit_voiced)
-                n = len(unit_voiced_sorted)
-                picks = [unit_voiced_sorted[int(n * frac)] for frac in (0.125, 0.375, 0.625, 0.875)][:5]
-                if n >= 5 and median_f0:
-                    mid = unit_voiced_sorted[n // 2]
-                    picks = [unit_voiced_sorted[0], mid, unit_voiced_sorted[-1]] + picks[1:3]
-                    picks = sorted(set(round(semitones(v, median_f0, UTTERANCE_MEDIAN), 2) for v in picks))[:5]
-                else:
-                    picks = sorted(set(round(semitones(v, median_f0, UTTERANCE_MEDIAN), 2) for v in picks))[:5]
-                st_points = [float(v) for v in picks]
+                indexes = np.linspace(0, len(unit_voiced) - 1, min(5, len(unit_voiced)), dtype=int)
+                st_points = [round(semitones(unit_voiced[j], median_f0, UTTERANCE_MEDIAN), 2) for j in indexes]
         pitch_points.append(st_points or None)
 
     # ── 句级走势：声调构成不明的场合标记 unresolved（不拿首末直线充数） ──
-    phrase_tone: Optional[str] = None
-    if voiced_f0 and median_f0 is not None:
-        # 只在证据充分（≥2 voiced 段且逐字对齐成立）时给走势；否则 unresolved
-        if len(units) >= 2 and len(segs.voiced) >= 1:
-            phrase_tone = "measured_low_confidence"
-        else:
-            phrase_tone = None
-    if units and phrase_tone is None and len(units) >= 2:
+    # No lexical/surface-tone separation algorithm is implemented. Having two
+    # aligned units alone is not evidence that phrase intonation was resolved.
+    if len(units) >= 2:
         # ≥2 单元仍无可靠句级走势 → 如实降级（带 stage，partial 一致性可提交）；
         # 单元=1 的短语没有"句级"可言，不算未解析
         limits.append("phrase_tone_unresolved")
@@ -272,6 +265,7 @@ def run_prosody(
         "variant_id": variant_id,
         "timebase_id": timebase_id,
         "f0_median_hz": median_f0,
+        "pitch_span_st": (12 * math.log2(max(voiced_f0) / min(voiced_f0))) if voiced_f0 else None,
         "reference_scope": UTTERANCE_MEDIAN.scope,
         "leading_silence_s": segs.leading_silence_s,
         "trailing_silence_s": segs.trailing_silence_s,
@@ -281,7 +275,6 @@ def run_prosody(
         "unit_pitch_st": pitch_points,
         "limits": sorted(set(limits)),
         "alignment_source": alignment_source,
-        "transcript": transcript,
         "downmix_note": "mean_of_channels; phase-cancellation not compensated",
     }
     return ProsodyResult(status=status, stages=stages, evidence=evidence, facts=facts)

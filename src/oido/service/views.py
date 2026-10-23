@@ -7,7 +7,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
 import sqlite3
 from typing import Optional
@@ -44,7 +43,9 @@ class ViewService:
         if view not in VIEWS:
             raise RenderError("unsupported", f"view must be one of {VIEWS}")
         run = self.conn.execute(
-            "SELECT audio_id, revision, status FROM analysis_runs WHERE analysis_id = ?",
+            """SELECT r.audio_id, r.revision, r.status FROM analysis_runs r
+               JOIN audio_assets a ON a.audio_id = r.audio_id
+               WHERE analysis_id = ? AND a.lifecycle = 'active'""",
             (analysis_id,),
         ).fetchone()
         if run is None or run["status"] not in ("succeeded", "partial"):
@@ -58,7 +59,6 @@ class ViewService:
             raise RenderError("source_unavailable", "decode_main variant missing")
         render_params = {"view": view, "range_ms": range_ms, "revision": run["revision"],
                          "render_version": "oido-render-1"}
-        key_digest = hashlib.sha256(json.dumps(render_params, sort_keys=True).encode()).hexdigest()
         existing = self.conn.execute(
             "SELECT artifact_id FROM artifacts WHERE analysis_id = ? AND kind = ? AND render_params = ?",
             (analysis_id, f"png_{view}", json.dumps(render_params, sort_keys=True)),
@@ -100,22 +100,37 @@ class ViewService:
 
         artifact_id = new_id("art")
         object_key = f"derivatives/{artifact_id}.png"
-        sha = self.objects.put_bytes(object_key, png)
+        intent = self.conn.execute(
+            """INSERT INTO orphan_objects (object_key, audio_id, owner, created_at)
+               SELECT ?, audio_id, owner, ? FROM audio_assets WHERE audio_id = ? AND lifecycle = 'active'""",
+            (object_key, utc_now_rfc3339(), run["audio_id"]))
+        self.conn.commit()
+        if intent.rowcount != 1:
+            raise RenderError("source_unavailable", "audio was deleted during rendering")
         try:
-            self.conn.execute(
+            sha = self.objects.put_bytes(object_key, png)
+            inserted = self.conn.execute(
                 """INSERT INTO artifacts (artifact_id, analysis_id, kind, object_key, sha256,
                                           media_type, render_params, created_at)
-                   VALUES (?, ?, ?, ?, ?, 'image/png', ?, ?)""",
+                   SELECT ?, ?, ?, ?, ?, 'image/png', ?, ?
+                   WHERE EXISTS (SELECT 1 FROM audio_assets WHERE audio_id = ? AND lifecycle = 'active')""",
                 (artifact_id, analysis_id, f"png_{view}", object_key, sha,
-                 json.dumps(render_params, sort_keys=True), utc_now_rfc3339()),
+                 json.dumps(render_params, sort_keys=True), utc_now_rfc3339(), run["audio_id"]),
             )
+            if inserted.rowcount != 1:
+                raise RenderError("source_unavailable", "audio was deleted during rendering")
+            self.conn.execute("DELETE FROM orphan_objects WHERE object_key = ?", (object_key,))
             self.conn.commit()
-        except sqlite3.Error:
+        except Exception:
             self.conn.rollback()
             try:
                 self.objects.delete(object_key)
+                self.conn.execute("DELETE FROM orphan_objects WHERE object_key = ?", (object_key,))
+                self.conn.commit()
             except OSError:
                 pass
+            except sqlite3.Error:
+                self.conn.rollback()
             raise
         return {"artifact_id": artifact_id, "reused": False, "png": png,
                 "view": view, "range_ms": range_ms, "sha256": sha}

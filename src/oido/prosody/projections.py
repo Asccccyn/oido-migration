@@ -59,24 +59,29 @@ def _schema_validate(def_name: str, obj: Any) -> None:
 
 
 # ── cursor ─────────────────────────────────────────────────────────────
-def encode_cursor(*, revision: int, offset: int) -> str:
-    raw = json.dumps({"r": revision, "o": offset}, separators=(",", ":")).encode()
+def encode_cursor(*, revision: int, offset: int, analysis_id: Optional[str] = None) -> str:
+    data = {"r": revision, "o": offset}
+    if analysis_id is not None:
+        data["a"] = analysis_id
+    raw = json.dumps(data, separators=(",", ":")).encode()
     return base64.urlsafe_b64encode(raw).decode().rstrip("=")
 
 
-def decode_cursor(cursor: str, *, expect_revision: Optional[int] = None) -> int:
+def decode_cursor(cursor: str, *, expect_revision: Optional[int] = None, analysis_id: Optional[str] = None) -> int:
     """返回 offset。revision 不匹配→SNAPSHOT_CHANGED（cursor 绑定快照）。"""
     try:
         pad = "=" * (-len(cursor) % 4)
         raw = base64.urlsafe_b64decode(cursor + pad)
         data = json.loads(raw)
         offset = data["o"]
-        if not isinstance(offset, int) or offset < 0:
+        if type(offset) is not int or offset < 0:
             raise ValueError
     except Exception as exc:
         raise ProjectionError("INVALID_CURSOR", "cursor is not a valid opaque token") from exc
     if expect_revision is not None and data.get("r") != expect_revision:
         raise ProjectionError("SNAPSHOT_CHANGED", "analysis revision changed; restart pagination")
+    if analysis_id is not None and data.get("a") not in (None, analysis_id):
+        raise ProjectionError("SNAPSHOT_CHANGED", "cursor belongs to another analysis; restart pagination")
     return offset
 
 
@@ -101,6 +106,7 @@ def evidence_overview(*, analysis_id: str, revision: int, facts: dict) -> dict:
     """默认证据概览：2-8 条有定位声学观察 + 限制。转写不重复。"""
     sr = facts["sr"]
     ms = lambda s: int(round(s * 1000.0))
+    full_range = facts.get("range_ms") or [0, max(1, ms(facts.get("duration_s", 0.0)))]
     observations: list[dict] = []
 
     def rng(start_s: float, end_s: float) -> list[int]:
@@ -124,7 +130,7 @@ def evidence_overview(*, analysis_id: str, revision: int, facts: dict) -> dict:
         if facts.get("voiced_total_s", 0) > 0:
             rate_val = round(len(units) / facts["voiced_total_s"], 3)
         obs: dict[str, Any] = {
-            "kind": "rate", "range_ms": rng(0, facts.get("duration_s", 0.0)), "value": rate_val,
+            "kind": "rate", "range_ms": full_range, "value": rate_val,
             "unit": "syllables_per_s",
             "quality": "uncertain" if facts.get("alignment_source") else "measured",
         }
@@ -134,15 +140,17 @@ def evidence_overview(*, analysis_id: str, revision: int, facts: dict) -> dict:
         observations.append(obs)
     pitch_st = facts.get("unit_pitch_st") or []
     voiced_st = [p for pts in pitch_st for p in (pts or [])]
-    if voiced_st:
+    span = facts.get("pitch_span_st")
+    if span is None and voiced_st:  # legacy facts retain their original measurements
         span = max(voiced_st) - min(voiced_st)
+    if span is not None:
         observations.append({
-            "kind": "pitch", "range_ms": rng(0, facts.get("duration_s", 0.0)),
+            "kind": "pitch", "range_ms": full_range,
             "value": round(span, 2), "unit": "semitone", "quality": "uncertain",
         })
     else:
         observations.append({
-            "kind": "pitch", "range_ms": rng(0, facts.get("duration_s", 0.0)),
+            "kind": "pitch", "range_ms": full_range,
             "value": None, "unit": "semitone", "quality": "unavailable", "reason": "unvoiced",
         })
     observations = observations[:8]
@@ -151,14 +159,14 @@ def evidence_overview(*, analysis_id: str, revision: int, facts: dict) -> dict:
         "analysis_id": analysis_id,
         "revision": revision,
         "state": "ready" if not facts.get("limits") else "partial",
-        "range_ms": [0, max(1, ms(facts.get("duration_s", 0.0)))],
+        "range_ms": full_range,
         "observations": observations,
     }
     limits = sorted(set(facts.get("limits", [])))[:8]
     if limits:
         overview["limits"] = limits
     if units and len(units) > 0:
-        overview["next_cursor"] = encode_cursor(revision=revision, offset=0)
+        overview["next_cursor"] = encode_cursor(revision=revision, offset=0, analysis_id=analysis_id)
     _schema_validate("evidence_overview", overview)
     _assert_budget("evidence_overview", overview)
     return overview
@@ -170,7 +178,7 @@ def prosody_page(*, analysis_id: str, revision: int, facts: dict, cursor: Option
     pitch_st = facts.get("unit_pitch_st") or []
     if not units:
         raise ProjectionError("NO_CHAR_ALIGNMENT", "no aligned syllables; overview limits explain why")
-    offset = decode_cursor(cursor, expect_revision=revision) if cursor else 0
+    offset = decode_cursor(cursor, expect_revision=revision, analysis_id=analysis_id) if cursor else 0
     if offset >= len(units):
         raise ProjectionError("INVALID_CURSOR", "cursor beyond end of syllable list")
     sr = facts["sr"]
@@ -178,18 +186,20 @@ def prosody_page(*, analysis_id: str, revision: int, facts: dict, cursor: Option
     window = units[offset: offset + PAGE_SIZE]
     syllables: list[dict] = []
     for i, unit in enumerate(window):
+        if len(unit["text"]) > 6:
+            raise ProjectionError("UNSUPPORTED_ALIGNMENT_UNIT", "aligned unit exceeds six characters; use the source transcript")
         idx = offset + i
         pts = pitch_st[idx] if idx < len(pitch_st) else None
         if pts:
             pts = [round(p, 2) for p in pts[:PITCH_POINTS_MAX]]
             syll: dict[str, Any] = {
-                "text": unit["text"][:6], "range_ms": [ms(unit["start_s"]), ms(unit["end_s"])],
+                "text": unit["text"], "range_ms": [ms(unit["start_s"]), ms(unit["end_s"])],
                 "pitch_st": pts,
                 "quality": "uncertain" if facts.get("alignment_source") else "measured",
             }
         else:
             syll = {
-                "text": unit["text"][:6], "range_ms": [ms(unit["start_s"]), ms(unit["end_s"])],
+                "text": unit["text"], "range_ms": [ms(unit["start_s"]), ms(unit["end_s"])],
                 "pitch_st": None, "quality": "unavailable", "reason": "unvoiced",
             }
         if unit.get("pinyin"):
@@ -210,7 +220,7 @@ def prosody_page(*, analysis_id: str, revision: int, facts: dict, cursor: Option
         page["limits"] = limits
     next_offset = offset + PAGE_SIZE
     if next_offset < len(units):
-        page["next_cursor"] = encode_cursor(revision=revision, offset=next_offset)
+        page["next_cursor"] = encode_cursor(revision=revision, offset=next_offset, analysis_id=analysis_id)
     _schema_validate("prosody_page", page)
     _assert_budget("prosody_page", page)
     return page

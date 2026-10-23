@@ -14,10 +14,10 @@ from typing import Optional
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 from oido import providers
-from oido.auth import ANONYMOUS_PATHS, AuthError, audit, token_from_env, verify_bearer
+from oido.auth import AuthError, audit, token_from_env, verify_bearer
 from oido.config import OidoConfig
 from oido.prosody import projections
 from oido.prosody.projections import ProjectionError
@@ -31,12 +31,14 @@ from oido.workers import analysis_worker
 
 
 class TranscriptIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     text: str
     source: str
     source_revision: Optional[str] = None
 
 
 class AnalyzeIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     audio_ref: str
     profile: str = "prosody"
     range_ms: Optional[list[int]] = None
@@ -89,11 +91,6 @@ def create_app(config: OidoConfig | None = None, conn: sqlite3.Connection | None
                       object_id=str(request.url.path), decision="deny")
             except sqlite3.Error:
                 pass
-
-    @app.middleware("http")
-    async def anonymous_paths_open(request: Request, call_next):
-        # ANONYMOUS_PATHS 之外未挂存储 → 503（not_ready），不假装可用
-        return await call_next(request)
 
     @app.get("/health/live")
     def live() -> dict:
@@ -151,13 +148,20 @@ def create_app(config: OidoConfig | None = None, conn: sqlite3.Connection | None
         if not cfg.enabled("ingest"):
             audit(conn, principal=principal, action="ingest", object_id="-", decision="deny")
             return _error_response(503, "SERVICE_DISABLED", "ingest flag is off", retryable=True)
-        declared = int(request.headers.get("content-length") or 0)
+        try:
+            declared = int(request.headers.get("content-length") or 0)
+        except ValueError:
+            return _error_response(422, "INVALID_INPUT", "invalid content length")
         if declared > 60 * 1024 * 1024:
             return _error_response(413, "BODY_TOO_LARGE", "audio payload exceeds 60MB limit")
         ref = request.headers.get("x-oido-audio-ref", "")
         sha = request.headers.get("x-oido-content-sha256") or None
         mime = request.headers.get("x-oido-mime") or None
-        data = await request.body()
+        data = bytearray()
+        async for chunk in request.stream():
+            if len(data) + len(chunk) > 60 * 1024 * 1024:
+                return _error_response(413, "BODY_TOO_LARGE", "audio payload exceeds 60MB limit")
+            data.extend(chunk)
         try:
             result = ingest.ingest(
                 principal=principal, audio_ref=ref, data=data,
@@ -187,11 +191,15 @@ def create_app(config: OidoConfig | None = None, conn: sqlite3.Connection | None
         if not body.text.strip():
             return _error_response(422, "INVALID_INPUT", "transcript.text must be non-empty")
         try:
-            conn.execute(
+            inserted = conn.execute(
                 """INSERT INTO audio_transcripts (audio_id, text, source, source_revision, created_at)
-                   VALUES (?, ?, ?, ?, ?)""",
-                (audio_id, body.text, body.source, body.source_revision, utc_now_rfc3339()),
+                   SELECT ?, ?, ?, ?, ? WHERE EXISTS
+                   (SELECT 1 FROM audio_assets WHERE audio_id = ? AND owner = ? AND lifecycle = 'active')""",
+                (audio_id, body.text, body.source, body.source_revision, utc_now_rfc3339(), audio_id, principal),
             )
+            if inserted.rowcount != 1:
+                conn.rollback()
+                return _error_response(404, "NOT_VISIBLE", "audio not found")
             conn.commit()
         except sqlite3.IntegrityError:
             conn.rollback()
@@ -364,6 +372,10 @@ def create_app(config: OidoConfig | None = None, conn: sqlite3.Connection | None
         except AnalysisError as exc:
             audit(conn, principal=principal, action="find", object_id=str(body.get("audio_ref", "-")), decision="deny")
             return _error_response(exc.http_status, exc.code, str(exc))
+        except RefError as exc:
+            return _error_response(exc.http_status, exc.code, str(exc))
+        except ProjectionError as exc:
+            return _error_response(422, exc.code, "result exceeds budget; use a shorter query or smaller limit")
         except (TypeError, ValueError):
             return _error_response(422, "INVALID_INPUT", "bad find request")
         audit(conn, principal=principal, action="find", object_id=out["audio_ref"], decision="allow")
@@ -374,6 +386,8 @@ def create_app(config: OidoConfig | None = None, conn: sqlite3.Connection | None
         principal = await principal_of(request)
         if comparer is None:
             return _error_response(503, "NOT_READY", "storage not attached")
+        if not cfg.enabled("offline_analysis"):
+            return _error_response(503, "SERVICE_DISABLED", "offline analysis is disabled", retryable=True)
         left, right = body.get("left"), body.get("right")
         if not isinstance(left, dict) or not isinstance(right, dict):
             return _error_response(422, "INVALID_INPUT", "left/right objects required")
@@ -384,6 +398,8 @@ def create_app(config: OidoConfig | None = None, conn: sqlite3.Connection | None
         except AnalysisError as exc:
             audit(conn, principal=principal, action="compare",
                   object_id=str(left.get("audio_ref", "-")), decision="deny")
+            return _error_response(exc.http_status, exc.code, str(exc))
+        except RefError as exc:
             return _error_response(exc.http_status, exc.code, str(exc))
         audit(conn, principal=principal, action="compare",
               object_id=f"{left.get('audio_ref')}|{right.get('audio_ref')}", decision="allow")

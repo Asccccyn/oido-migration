@@ -52,18 +52,25 @@ class CompareService:
             if len(range_ms) != 2 or range_ms[0] < 0 or range_ms[1] <= range_ms[0]:
                 raise AnalysisError("invalid_input", "range_ms must be [start,end) ms", 422)
             a, b = range_ms[0] / 1000.0, range_ms[1] / 1000.0
+            source_range = facts.get("range_ms") or [0, round(facts["duration_s"] * 1000)]
+            if not source_range[0] <= range_ms[0] < range_ms[1] <= source_range[1]:
+                raise AnalysisError("invalid_input", "range exceeds analyzed source interval", 422)
             pauses = [p for p in pauses if p["start_s"] >= a and p["end_s"] <= b]
             units = [u for u in units if u["start_s"] >= a and u["end_s"] <= b]
             voiced = sum(u["end_s"] - u["start_s"] for u in units)
             m.update({
                 "duration_s": round(b - a, 3),
-                "voiced_total_s": round(voiced, 3),
+                "voiced_total_s": round(voiced, 3) if units else None,
+                # The stored median is for the full analysis, not this crop.
+                "f0_median_hz": None,
                 "pauses_count": float(len(pauses)),
                 "pauses_total_s": round(sum(p["duration_ms"] for p in pauses) / 1000.0, 3),
                 "speech_rate_syl_per_s": round(len(units) / voiced, 3) if units and voiced > 0 else None,
             })
         return {"audio_ref": audio_ref, "analysis_id": row["analysis_id"],
                 "revision": row["revision"], "metrics": m,
+                "alignment_source": facts.get("alignment_source"),
+                "range_ms": range_ms,
                 "downmix_note": facts.get("downmix_note")}
 
     def compare(self, *, principal: str, left: dict, right: dict, metrics: Optional[list[str]] = None) -> dict:
@@ -73,9 +80,8 @@ class CompareService:
         want = metrics or list(_METRICS)
         ls = self._side(principal, left.get("audio_ref", ""), left.get("range_ms"))
         rs = self._side(principal, right.get("audio_ref", ""), right.get("range_ms"))
-        limits: list[str] = []
-        if ls["downmix_note"] != rs["downmix_note"]:
-            limits.append("capture_processing_unknown")
+        # Equal decoder notes do not establish equal microphones/AGC/routes.
+        limits: list[str] = ["capture_processing_unknown"]
         d_left = ls["metrics"]["duration_s"] or 0.0
         d_right = rs["metrics"]["duration_s"] or 0.0
         if d_left > 0 and d_right > 0 and (max(d_left, d_right) / max(1e-6, min(d_left, d_right))) > 3:
@@ -86,12 +92,13 @@ class CompareService:
             entry: dict = {"metric": k, "left": a, "right": b}
             if a is None or b is None:
                 entry["quality"] = "unavailable"
-                entry["reason"] = "unvoiced" if k == "f0_median_hz" else "no_transcript" if "rate" in k else "low_signal"
+                entry["reason"] = "low_signal" if ls["range_ms"] or rs["range_ms"] else "unvoiced" if k == "f0_median_hz" else "no_transcript" if "rate" in k else "low_signal"
             else:
                 entry["diff"] = round(b - a, 4)
                 if a != 0:
                     entry["ratio"] = round(b / a, 3)
-                entry["quality"] = "measured"
+                entry["quality"] = ("uncertain" if k in ("voiced_total_s", "speech_rate_syl_per_s")
+                                    and (ls["alignment_source"] or rs["alignment_source"]) else "measured")
             differences.append(entry)
         return {
             "left": {k: ls[k] for k in ("audio_ref", "analysis_id", "revision")},

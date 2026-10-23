@@ -8,6 +8,7 @@ audio_ref = "<owner>:<opaque_id>"，owner ∈ {est, siren}。
 
 from __future__ import annotations
 
+import hashlib
 import sqlite3
 from typing import Optional
 
@@ -79,6 +80,7 @@ class IngestService:
             raise RefError("forbidden", "cannot ingest into another owner's namespace", 403)
         if not data:
             raise RefError("invalid_input", "empty audio payload")
+        actual_sha = hashlib.sha256(data).hexdigest()
         kind = OWNER_ORIGIN_KIND[owner]
         existing = self.conn.execute(
             "SELECT og.audio_id, aa.sha256 FROM audio_origins og "
@@ -87,13 +89,21 @@ class IngestService:
             (kind, opaque),
         ).fetchone()
         if existing is not None:
-            if content_sha256 and existing["sha256"] != content_sha256:
+            if existing["sha256"] != actual_sha or (content_sha256 and content_sha256 != actual_sha):
                 raise RefError(
                     "content_conflict",
                     "same external id already ingested with different bytes",
                     409,
                 )
             return {"audio_id": existing["audio_id"], "deduplicated": True}
+
+        if content_sha256 and content_sha256 != actual_sha:
+            raise RefError("content_conflict", "declared digest does not match audio bytes", 409)
+        if transcript is not None:
+            if not isinstance(transcript.get("text"), str) or not transcript["text"].strip():
+                raise RefError("invalid_input", "transcript.text must be a non-empty string")
+            if not isinstance(transcript.get("source"), str) or not transcript["source"].strip():
+                raise RefError("invalid_input", "transcript.source is required")
 
         registered = self.assets.register_upload(
             owner=principal,

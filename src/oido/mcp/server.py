@@ -2,8 +2,8 @@
 
 newline-delimited JSON-RPC；不引 MCP SDK 依赖，只实现 initialize/tools/list/
 tools/call/ping。与 HTTP API 走完全相同的 service 层（单一业务真源）。
-工具清单来自 contracts/mcp-tools.v2.json；view/find/compare 如实返回
-NOT_IMPLEMENTED，不拿空壳报完成。旧 v1 audio_id 参数单层映射。
+工具清单与入参校验来自 contracts/mcp-tools.v2.json。view 返回原生图片内容。
+旧 v1 audio_id 参数单层映射。
 输出单份 JSON 文本（不 text+structuredContent 双份重复）。
 
 启动：OIDO_DATA_ROOT=... OIDO_AUTH_TOKEN=... python -m oido.mcp.server
@@ -29,8 +29,6 @@ from oido.storage.objects import ObjectStore
 from oido.workers import analysis_worker
 
 _CONTRACT = Path(__file__).resolve().parents[3] / "contracts" / "mcp-tools.v2.json"
-IMPLEMENTED = {"oido_capabilities", "oido_analyze", "oido_get",
-               "oido_view", "oido_find", "oido_compare"}
 PROTOCOL_VERSION = "2024-11-05"
 
 
@@ -87,13 +85,16 @@ def _resolve_ref_arg(args: dict, ctx: _Ctx) -> str:
 
 
 def _call_tool(name: str, args: dict, ctx: _Ctx) -> dict:
-    principal = "mcp"
     if name == "oido_capabilities":
         cap = args.get("capability")
         caps = providers.capabilities()
         if isinstance(cap, str) and cap:
             caps = [c for c in caps if c.get("name") == cap]
-        return {"providers": caps, "flags": ctx.cfg.flags}
+        return {"providers": [{k: v for k, v in c.items() if k in ("name", "category", "status", "version") and v is not None}
+                              for c in caps],
+                "analysis": "enabled" if ctx.cfg.enabled("offline_analysis") else "disabled"}
+    if name in ("oido_analyze", "oido_view", "oido_find", "oido_compare") and not ctx.cfg.enabled("offline_analysis"):
+        raise RefError("service_disabled", "offline analysis is disabled", 503)
     if name == "oido_analyze":
         ref = _resolve_ref_arg(args, ctx)
         profile = args.get("profile", "prosody")
@@ -101,6 +102,7 @@ def _call_tool(name: str, args: dict, ctx: _Ctx) -> dict:
         created = ctx.analyses.create(
             audio_id=audio_id, profile=profile, requested_by="est",
             idempotency_key=args.get("idempotency_key"),
+            range_={"start_ms": args["range_ms"][0], "end_ms": args["range_ms"][1]} if args.get("range_ms") is not None else None,
         )
         # 有界同步等待：单次内联执行，完成即回概览，未完成回票据
         analysis_worker.process_one(
@@ -122,11 +124,17 @@ def _call_tool(name: str, args: dict, ctx: _Ctx) -> dict:
         if not isinstance(analysis_id, str) or not analysis_id:
             raise RefError("invalid_input", "analysis_id is required")
         run = ctx.analyses.get(analysis_id, principal="est")
+        if args.get("revision") is not None and args["revision"] != run["revision"]:
+            raise RefError("snapshot_changed", "requested analysis revision is unavailable", 409)
         if run["status"] not in ("succeeded", "partial"):
             return projections.error_body("NOT_READY_YET", f"analysis is {run['status']}", retryable=True)
         facts = analysis_worker.load_facts(ctx.conn, analysis_id)
         if facts is None:
             return projections.error_body("FACTS_MISSING", "terminal run has no facts artifact")
+        if args.get("range_ms") is not None:
+            stored_range = facts.get("range_ms") or [0, round(facts["duration_s"] * 1000)]
+            if args["range_ms"] != stored_range:
+                raise RefError("range_requires_analysis", "use oido_analyze with inspect_range for a different range", 422)
         if args.get("detail") == "prosody_page":
             try:
                 return projections.prosody_page(
@@ -146,6 +154,8 @@ def _call_tool(name: str, args: dict, ctx: _Ctx) -> dict:
                                     and all(isinstance(v, int) for v in rng)):
             raise RefError("invalid_input", "range_ms must be [start,end)")
         run = ctx.analyses.get(analysis_id, principal="est")
+        if args.get("revision") is not None and args["revision"] != run["revision"]:
+            raise RefError("snapshot_changed", "requested analysis revision is unavailable", 409)
         if run["status"] not in ("succeeded", "partial"):
             return projections.error_body("NOT_READY_YET", f"analysis is {run['status']}", retryable=True)
         out = ctx.views.render(analysis_id=analysis_id, view=view, range_ms=rng)
@@ -195,6 +205,18 @@ def handle_message(msg: dict, ctx: Optional[_Ctx] = None) -> Optional[dict]:
             args = params.get("arguments") or {}
             if ctx is None:
                 ctx = _Ctx()
+            import jsonschema
+            definition = next((t for t in _tool_list() if t["name"] == name), None)
+            if definition is None:
+                raise RefError("unknown_tool", "unknown tool")
+            if not isinstance(args, dict):
+                raise RefError("invalid_input", "arguments must be an object")
+            args = dict(args)
+            if "audio_id" in args and "audio_ref" not in args:
+                args["audio_ref"] = _resolve_ref_arg(args, ctx)
+                del args["audio_id"]
+            if not jsonschema.Draft202012Validator(definition["inputSchema"]).is_valid(args):
+                raise RefError("invalid_input", "arguments do not match the tool schema")
             output = _call_tool(name, args, ctx)
             if isinstance(output, dict) and "__png_b64__" in output:
                 png_b64 = output.pop("__png_b64__")
@@ -210,7 +232,7 @@ def handle_message(msg: dict, ctx: Optional[_Ctx] = None) -> Optional[dict]:
             text = json.dumps(output, ensure_ascii=False, separators=(",", ":"), allow_nan=False)
             return {"jsonrpc": "2.0", "id": msg_id, "result": {
                 "content": [{"type": "text", "text": text}],
-                "isError": False,
+                "isError": isinstance(output, dict) and "code" in output,
             }}
         except (RefError, AnalysisError, projections.ProjectionError) as exc:
             code = getattr(exc, "code", "TOOL_ERROR").upper().replace("-", "_")
@@ -220,7 +242,7 @@ def handle_message(msg: dict, ctx: Optional[_Ctx] = None) -> Optional[dict]:
                 "isError": True,
             }}
         except Exception as exc:  # noqa: BLE001
-            body = projections.error_body("TOOL_ERROR", str(exc)[:120])
+            body = projections.error_body("TOOL_ERROR", "tool execution failed")
             return {"jsonrpc": "2.0", "id": msg_id, "result": {
                 "content": [{"type": "text", "text": json.dumps(body, ensure_ascii=False)}],
                 "isError": True,

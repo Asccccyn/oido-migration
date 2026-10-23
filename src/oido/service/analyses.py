@@ -26,7 +26,6 @@ from oido.domain.states import (
 )
 
 PROFILES = ("prosody", "full_evidence", "conversation_fast", "inspect_range")
-_TERMINAL = ("succeeded", "partial", "failed", "cancelled")
 
 
 class AnalysisError(Exception):
@@ -57,6 +56,16 @@ class AnalysisService:
     ) -> dict:
         if profile not in PROFILES:
             raise AnalysisError("invalid_profile", f"unknown profile: {profile}", 422)
+        # Keep the old persisted {start,end} request contract intact. Its units
+        # were unspecified; the worker must reject execution rather than guess.
+        legacy_range = isinstance(range_, dict) and set(range_) == {"start", "end"}
+        if range_ is not None and not legacy_range and (not isinstance(range_, dict)
+                or set(range_) != {"start_ms", "end_ms"}
+                or any(type(range_[k]) is not int for k in ("start_ms", "end_ms"))
+                or not 0 <= range_["start_ms"] < range_["end_ms"]):
+            raise AnalysisError("invalid_range", "range must be [start,end) milliseconds", 422)
+        if profile == "inspect_range" and range_ is None:
+            raise AnalysisError("invalid_range", "inspect_range requires range_ms", 422)
         # R05：空/白字串幂等键统一按"无键"处理，杜绝唯一索引裸异常
         if idempotency_key is not None and not idempotency_key.strip():
             idempotency_key = None

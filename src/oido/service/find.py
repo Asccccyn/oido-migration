@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from typing import Optional
 
+from oido.prosody.projections import _assert_budget
 from oido.service.analyses import AnalysisError
 from oido.workers.analysis_worker import load_facts
 
@@ -35,8 +36,8 @@ class FindService:
 
     def find(self, *, principal: str, audio_ref: str, query: str, mode: str = "substring",
              limit: int = DEFAULT_LIMIT) -> dict:
-        if not query.strip():
-            raise AnalysisError("invalid_input", "query must be non-empty", 422)
+        if not isinstance(query, str) or not query.strip() or len(query) > 200:
+            raise AnalysisError("invalid_input", "query must be 1..200 characters", 422)
         if limit < 1 or limit > MAX_LIMIT:
             raise AnalysisError("invalid_input", f"limit must be 1..{MAX_LIMIT}", 422)
         if mode not in ("substring", "fuzzy"):
@@ -75,21 +76,22 @@ class FindService:
             if matched:
                 u0, u1 = index_of_char[i], index_of_char[i + m - 1]
                 hits.append({
-                    "analysis_id": row["analysis_id"],
                     "range_ms": [round(units[u0]["start_s"] * 1000), round(units[u1]["end_s"] * 1000)],
                     "matched_units": m,
                     "match": window,
                 })
+                if len(hits) >= limit:
+                    break
                 i += max(1, m)  # 不重叠推进
             else:
                 i += 1
-        hits = hits[:limit]
-        return {
+        result = {
             "audio_ref": audio_ref,
             "analysis_id": row["analysis_id"],
-            "query": query,
             "mode": mode,
             "state": "candidates" if hits else "no_match",
             "items": hits,
             "limits": ["unaligned"] if facts.get("alignment_source") else [],
         }
+        _assert_budget("media_candidates", result)
+        return result

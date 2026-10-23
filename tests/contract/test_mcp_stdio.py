@@ -26,6 +26,8 @@ def server_proc(tmp_path_factory):
     for k in list(env):
         if k.startswith("OIDO_FLAG_"):
             env.pop(k)
+    # This fixture exercises enabled tools; disabled behavior has its own audit regression.
+    env["OIDO_FLAG_OFFLINE_ANALYSIS"] = "1"
     proc = subprocess.Popen(
         [sys.executable, "-m", "oido.mcp.server"],
         stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,

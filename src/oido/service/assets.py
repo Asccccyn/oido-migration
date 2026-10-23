@@ -252,6 +252,7 @@ class AssetService:
 
         # ── 第 3 步：派生数据清库 + 终态（F03/R01）─────────────────────────
         try:
+            self.conn.execute("DELETE FROM audio_transcripts WHERE audio_id = ?", (audio_id,))
             self.conn.execute(
                 """DELETE FROM evidence_items WHERE analysis_id IN
                    (SELECT analysis_id FROM analysis_runs WHERE audio_id = ?)""",
