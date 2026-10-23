@@ -10,11 +10,11 @@ from __future__ import annotations
 
 import sqlite3
 from pathlib import Path
-from typing import Optional
+from typing import Literal, Optional
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 from oido import providers
 from oido.auth import AuthError, audit, token_from_env, verify_bearer
@@ -35,6 +35,24 @@ class TranscriptIn(BaseModel):
     text: str
     source: str
     source_revision: Optional[str] = None
+
+
+class FindIn(BaseModel):
+    """R6′（2026-10-23）：HTTP find 入参收紧——对齐 MCP 合同（未知字段拒绝，类型强校验）。"""
+    model_config = {"extra": "forbid"}
+    audio_ref: str
+    query: str = Field(min_length=1, max_length=200)
+    mode: Literal["substring", "fuzzy"] = "substring"
+    limit: int = Field(default=3, ge=1, le=10)
+    cursor: str | None = None
+
+
+class CompareIn(BaseModel):
+    """R6′（2026-10-23）：HTTP compare 入参收紧（同上）。"""
+    model_config = {"extra": "forbid"}
+    left: dict
+    right: dict
+    metrics: list[str] | None = None
 
 
 class AnalyzeIn(BaseModel):
@@ -268,10 +286,23 @@ def create_app(config: OidoConfig | None = None, conn: sqlite3.Connection | None
             audit(conn, principal=principal, action="analyze", object_id=body.audio_ref, decision="deny")
             return _error_response(exc.http_status, exc.code, str(exc))
         if body.wait_ms > 0:
-            analysis_worker.process_one(
-                conn=conn, analyses=analyses, variants=variants, ingest=ingest,
-                objects=objects, analysis_id=created["analysis_id"],
-            )
+            # R6′（2026-10-23）：wait_ms 恢复真实等待上限——执行器线程在跑时轮询至期限，
+            # 到限未完成=返回票据（不再内联跑完 DSP）；无执行器（测试/MCP stdio）维持同步内联。
+            from oido.workers.executor import EXECUTOR_ACTIVE
+            if EXECUTOR_ACTIVE:
+                import time as _time
+                deadline = _time.monotonic() + body.wait_ms / 1000.0
+                while _time.monotonic() < deadline:
+                    if analyses.get(created["analysis_id"], principal=principal)["status"] in (
+                        "succeeded", "partial", "failed", "cancelled",
+                    ):
+                        break
+                    _time.sleep(0.05)
+            else:
+                analysis_worker.process_one(
+                    conn=conn, analyses=analyses, variants=variants, ingest=ingest,
+                    objects=objects, analysis_id=created["analysis_id"],
+                )
             run = analyses.get(created["analysis_id"], principal=principal)
             if run["status"] in ("succeeded", "partial"):
                 facts = analysis_worker.load_facts(conn, created["analysis_id"])
@@ -282,6 +313,23 @@ def create_app(config: OidoConfig | None = None, conn: sqlite3.Connection | None
                 return _error_response(422, "ANALYSIS_FAILED", run.get("error_code") or "pipeline_failed")
         state = "running" if analyses.get(created["analysis_id"], principal=principal)["status"] == "running" else "queued"
         return projections.analysis_ticket(created["analysis_id"], state)
+
+    @app.post("/v1/analyses/{analysis_id}/cancel")
+    async def cancel_analysis(analysis_id: str, request: Request):
+        """R6′（2026-10-23）：取消——DB fence（status→cancelled+fence+1），迟到提交被拒；
+        已进入的计算段不可抢占（如实等待自然结束）。取消后新阶段不再推进。"""
+        principal = await principal_of(request)
+        if conn is None or analyses is None:
+            return _error_response(503, "NOT_READY", "storage not attached")
+        try:
+            run = analyses.get(analysis_id, principal=principal)
+        except AnalysisError as exc:
+            return _error_response(exc.http_status, exc.code, str(exc))
+        if run["status"] in ("succeeded", "partial", "failed", "cancelled"):
+            return {"analysis_id": analysis_id, "status": run["status"], "cancelled": run["status"] == "cancelled"}
+        analyses.cancel(analysis_id, principal=principal)
+        audit(conn, principal=principal, action="cancel", object_id=analysis_id, decision="allow")
+        return {"analysis_id": analysis_id, "status": "cancelled", "cancelled": True}
 
     @app.get("/v1/analyses/{analysis_id}")
     async def get_overview(analysis_id: str, request: Request):
@@ -357,7 +405,7 @@ def create_app(config: OidoConfig | None = None, conn: sqlite3.Connection | None
             "X-Oido-Artifact-Id": out["artifact_id"], "X-Oido-View": view})
 
     @app.post("/v1/find")
-    async def find_audio(body: dict, request: Request):
+    async def find_audio(body: FindIn, request: Request):
         principal = await principal_of(request)
         if finder is None:
             return _error_response(503, "NOT_READY", "storage not attached")
@@ -365,12 +413,11 @@ def create_app(config: OidoConfig | None = None, conn: sqlite3.Connection | None
             return _error_response(503, "SERVICE_DISABLED", "offline_analysis flag is off", retryable=True)
         try:
             out = finder.find(
-                principal=principal, audio_ref=str(body.get("audio_ref", "")),
-                query=str(body.get("query", "")),
-                mode=str(body.get("mode", "substring")),
-                limit=int(body.get("limit", 3)))
+                principal=principal, audio_ref=body.audio_ref,
+                query=body.query, mode=body.mode, limit=body.limit,
+                cursor=body.cursor)
         except AnalysisError as exc:
-            audit(conn, principal=principal, action="find", object_id=str(body.get("audio_ref", "-")), decision="deny")
+            audit(conn, principal=principal, action="find", object_id=body.audio_ref, decision="deny")
             return _error_response(exc.http_status, exc.code, str(exc))
         except RefError as exc:
             return _error_response(exc.http_status, exc.code, str(exc))
@@ -382,19 +429,16 @@ def create_app(config: OidoConfig | None = None, conn: sqlite3.Connection | None
         return out
 
     @app.post("/v1/compare")
-    async def compare_audio(body: dict, request: Request):
+    async def compare_audio(body: CompareIn, request: Request):
         principal = await principal_of(request)
         if comparer is None:
             return _error_response(503, "NOT_READY", "storage not attached")
         if not cfg.enabled("offline_analysis"):
             return _error_response(503, "SERVICE_DISABLED", "offline analysis is disabled", retryable=True)
-        left, right = body.get("left"), body.get("right")
-        if not isinstance(left, dict) or not isinstance(right, dict):
-            return _error_response(422, "INVALID_INPUT", "left/right objects required")
+        left, right = body.left, body.right
         try:
             out = comparer.compare(
-                principal=principal, left=left, right=right,
-                metrics=body.get("metrics") if isinstance(body.get("metrics"), list) else None)
+                principal=principal, left=left, right=right, metrics=body.metrics)
         except AnalysisError as exc:
             audit(conn, principal=principal, action="compare",
                   object_id=str(left.get("audio_ref", "-")), decision="deny")

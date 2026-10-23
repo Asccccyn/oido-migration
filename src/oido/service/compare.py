@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from typing import Optional
 
+from oido.prosody.projections import _assert_budget
 from oido.service.analyses import AnalysisError
 from oido.workers.analysis_worker import load_facts
 
@@ -100,7 +101,7 @@ class CompareService:
                 entry["quality"] = ("uncertain" if k in ("voiced_total_s", "speech_rate_syl_per_s")
                                     and (ls["alignment_source"] or rs["alignment_source"]) else "measured")
             differences.append(entry)
-        return {
+        result = {
             "left": {k: ls[k] for k in ("audio_ref", "analysis_id", "revision")},
             "right": {k: rs[k] for k in ("audio_ref", "analysis_id", "revision")},
             "metrics": differences,
@@ -108,3 +109,6 @@ class CompareService:
             # 无批准个人基线：明确拒绝"比平时"表述（05），不做任何心理比较
             "baseline_comparison": {"state": "unavailable", "reason": "insufficient_baseline"},
         }
+        # R6′（2026-10-23）：结果预算门——此前 compare 无预算键（新键=收紧不是放宽）
+        _assert_budget("compare_result", result)
+        return result

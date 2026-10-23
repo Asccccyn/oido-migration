@@ -5,5 +5,6 @@
   "media_candidates": 4096,
   "error": 512,
   "analyze_request": 512,
-  "$comment": "UTF-8 紧凑 JSON 字节上限（联合施工包 08）。bytes≠token；token 计数另行用实际运行期 tokenizer 补测。预算失败即 CI 失败；调整须附前后真实样本。"
+  "$comment": "UTF-8 紧凑 JSON 字节上限（联合施工包 08）。bytes≠token；token 计数另行用实际运行期 tokenizer 补测。预算失败即 CI 失败；调整须附前后真实样本。",
+  "compare_result": 2048
 }

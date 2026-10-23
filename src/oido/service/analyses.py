@@ -38,6 +38,20 @@ class AnalysisError(Exception):
 def _digest(payload: dict) -> str:
     return hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
 
+def _pipeline_version() -> str:
+    from oido.prosody.pipeline import PIPELINE_METHOD_VERSION
+    return PIPELINE_METHOD_VERSION
+
+
+def _transcript_hash(conn: sqlite3.Connection, audio_id: str) -> str:
+    row = conn.execute(
+        "SELECT text FROM audio_transcripts WHERE audio_id = ? LIMIT 1",
+        (audio_id,),
+    ).fetchone()
+    if row is None or row["text"] is None:
+        return "no-transcript"
+    return hashlib.sha256(row["text"].encode("utf-8")).hexdigest()
+
 
 class AnalysisService:
     def __init__(self, conn: sqlite3.Connection):
@@ -74,8 +88,15 @@ class AnalysisService:
         ).fetchone()
         if asset is None or asset["owner"] != requested_by or asset["lifecycle"] != "active":
             raise AnalysisError("not_visible", "audio not found", 404)
+        # R6′（2026-10-23，她批 R6P 方案）：digest 纳入版本成分——pipeline 方法版本 +
+        # 当前可信转写内容 hash（无转写=哨兵）。同源在新版本下产生新 digest=新分析，
+        # 旧错误结果不再命中；操作幂等键语义不变（同键异 digest 仍 409，E11 反例保留）。
+        pipeline_version = _pipeline_version()
+        transcript_hash = _transcript_hash(self.conn, audio_id)
         request_payload = {"audio_id": audio_id, "profile": profile,
-                           "range": range_, "budget": budget}
+                           "range": range_, "budget": budget,
+                           "pipeline_version": pipeline_version,
+                           "transcript_sha256": transcript_hash}
         digest = _digest(request_payload)
         if idempotency_key:
             existing = self._find_by_key(requested_by, idempotency_key)

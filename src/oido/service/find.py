@@ -7,6 +7,9 @@
 
 from __future__ import annotations
 
+import base64
+import hashlib
+import json as _json
 from typing import Optional
 
 from oido.prosody.projections import _assert_budget
@@ -35,7 +38,7 @@ class FindService:
         self.ingest = ingest
 
     def find(self, *, principal: str, audio_ref: str, query: str, mode: str = "substring",
-             limit: int = DEFAULT_LIMIT) -> dict:
+             limit: int = DEFAULT_LIMIT, cursor: Optional[str] = None) -> dict:
         if not isinstance(query, str) or not query.strip() or len(query) > 200:
             raise AnalysisError("invalid_input", "query must be 1..200 characters", 422)
         if limit < 1 or limit > MAX_LIMIT:
@@ -70,11 +73,28 @@ class FindService:
         hits: list[dict] = []
         n, m = len(seq), len(q)
         i = 0
+        skip = 0
+        skip_total = 0  # R6′：本页之前已交付的命中总数（游标续页基数）
+        if cursor:
+            try:
+                decoded = _json.loads(base64.urlsafe_b64decode(cursor))
+            except Exception:
+                raise AnalysisError("invalid_cursor", "cursor is not readable", 422)
+            if (decoded.get("a") != row["analysis_id"] or decoded.get("r") != row["revision"]
+                    or decoded.get("q") != hashlib.sha256(q.encode()).hexdigest()[:16]
+                    or not isinstance(decoded.get("skip"), int) or decoded["skip"] < 0):
+                raise AnalysisError("cursor_stale", "cursor does not match this analysis/query", 409)
+            skip = decoded["skip"]
+            skip_total = decoded["skip"]
         while i <= n - m:
             window = seq[i:i + m]
             matched = window == q if mode == "substring" else _fuzzy_eq(window, q)
             if matched:
                 u0, u1 = index_of_char[i], index_of_char[i + m - 1]
+                if skip > 0:
+                    skip -= 1  # R6′：游标跳过前页已交付命中（不重叠推进语义不变）
+                    i += max(1, m)
+                    continue
                 hits.append({
                     "range_ms": [round(units[u0]["start_s"] * 1000), round(units[u1]["end_s"] * 1000)],
                     "matched_units": m,
@@ -93,5 +113,13 @@ class FindService:
             "items": hits,
             "limits": ["unaligned"] if facts.get("alignment_source") else [],
         }
+        # R6′（2026-10-23）：命中截断时给 next_cursor（命中流偏移，绑定 analysis+revision+
+        # query hash——换分析/换查询=游标失效如实报）；无截断不带（读尽即止）
+        if len(hits) >= limit and i < n - m + 1:
+            import base64, json as _json
+            result["next_cursor"] = base64.urlsafe_b64encode(_json.dumps({
+                "a": row["analysis_id"], "r": row["revision"],
+                "q": hashlib.sha256(q.encode()).hexdigest()[:16], "skip": skip_total + len(hits),
+            }).encode()).decode()
         _assert_budget("media_candidates", result)
         return result

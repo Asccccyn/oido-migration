@@ -7,6 +7,9 @@
 
 from __future__ import annotations
 
+# R6′（2026-10-23）：分析缓存键的版本成分之一——算法/合同变更时递增
+PIPELINE_METHOD_VERSION = 'oido-prosody-1'
+
 import math
 from dataclasses import dataclass, field, replace
 from typing import Any, Optional
@@ -55,7 +58,7 @@ def _measurement(*, feature: str, value: Optional[float], unit: str, range_sampl
         "value": None if value is None else float(value),
         "unit": unit,
         "method": method,
-        "method_version": "oido-prosody-1",
+        "method_version": PIPELINE_METHOD_VERSION,
         "input_variant_id": variant_id,
         "timebase_id": timebase_id,
         "range": dict(range_samples),

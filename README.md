@@ -11,6 +11,7 @@
 - 2026-10-22（分支 `voice-joint-20261022`，未部署）：联合语音批 `JOINT-VOICE-20261022`——最小完整深听落地：bearer 认证+access_audit、ffmpeg 隔离解码（audio_variants 首次生产写入）、韵律主链（F0/停顿/语速/能量-DP 低置信对齐+unaligned 降级/pypinyin 本调/utterance_median 相对半音）、投影层（schema 单源+字节预算 CI+cursor 快照绑定）、HTTP 全路由（ingest/analyses/overview/prosody/delete，ingest/offline_analysis 双 flag）、MCP stdio 六工具 v2 合同（audio_ref 口径；view/find/compare 如实 NOT_IMPLEMENTED）、0004 转写正本迁移。**239 测试绿**（基线 176+新 63）。真人语音/真实模型/真实宿主 NOT_EXECUTED。commit `409fcbe`。
 - 当前状态：**WP00 + WP01 + WP03 的 P0 基础层完成**（评审定名，非"首期功能完成"——韵律谱/渲染/MCP/真实语音验收未落地）。Phase 0 四入口测试已武装（`evals/phase0/PROTOCOL.md`）。诚实清单见 `docs/IMPLEMENTATION_REPORT.md` 与 `acceptance.json`。
 
+- 2026-10-23（分支 `audit-fix-joint-voice-20261023` 叠加，未部署）：R6′ 生命周期闭环（她批 R6P 方案）：分析缓存键纳入版本成分（PIPELINE_METHOD_VERSION + 转写内容 hash——同源新版本=新分析，旧错结果不命中；操作幂等键 409 语义不变）；`__main__` 启动进程内串行执行器线程（此前 wait_ms=0 只落 queued 无消费者、正值内联跑完不守期限——现 EXECUTOR_ACTIVE 下 HTTP wait_ms=真实轮询上限，到限返回票据）；`POST /v1/analyses/{id}/cancel`（DB fence；阶段间检查点停推进，在途计算段不可抢占如实声明）；find 截断带 next_cursor（绑定 analysis+revision+query hash）；compare 结果预算门 compare_result=2048B（新键=收紧）；HTTP find/compare 入收取紧（pydantic extra=forbid）。275 绿。
 ## 快速开始
 
 ```bash

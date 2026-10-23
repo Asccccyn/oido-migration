@@ -57,12 +57,23 @@ def process_one(
     if lease is None:
         return None
     audio_id = lease["request"]["audio_id"]
+
+    def _cancelled() -> bool:
+        # R6′（2026-10-23）：取消检查点——已取消不再推进新阶段（在途 ffmpeg/pYIN 段
+        # 不可抢占，如实等它自然结束；迟到提交仍被 fence 拒）
+        row = conn.execute("SELECT status FROM analysis_runs WHERE analysis_id = ?", (analysis_id,)).fetchone()
+        return row is not None and row["status"] == "cancelled"
+
+    if _cancelled():
+        return None
     try:
         asset = conn.execute(
             "SELECT original_object_key FROM audio_assets WHERE audio_id = ?", (audio_id,)
         ).fetchone()
         original = objects.read_bytes(asset["original_object_key"])
         variant = variants.ensure_decode_main(audio_id=audio_id, original_bytes=original)
+        if _cancelled():
+            return None
         samples = variants.load_pcm(variant)
         transcript = ingest.transcript_of(audio_id)
         requested_range = lease["request"].get("range")
