@@ -151,6 +151,9 @@ def create_app(config: OidoConfig | None = None, conn: sqlite3.Connection | None
         if not cfg.enabled("ingest"):
             audit(conn, principal=principal, action="ingest", object_id="-", decision="deny")
             return _error_response(503, "SERVICE_DISABLED", "ingest flag is off", retryable=True)
+        declared = int(request.headers.get("content-length") or 0)
+        if declared > 60 * 1024 * 1024:
+            return _error_response(413, "BODY_TOO_LARGE", "audio payload exceeds 60MB limit")
         ref = request.headers.get("x-oido-audio-ref", "")
         sha = request.headers.get("x-oido-content-sha256") or None
         mime = request.headers.get("x-oido-mime") or None
@@ -320,6 +323,8 @@ def create_app(config: OidoConfig | None = None, conn: sqlite3.Connection | None
         principal = await principal_of(request)
         if views is None:
             return _error_response(503, "NOT_READY", "storage not attached")
+        if not cfg.enabled("offline_analysis"):
+            return _error_response(503, "SERVICE_DISABLED", "offline_analysis flag is off", retryable=True)
         try:
             run = analyses.get(analysis_id, principal=principal)
         except AnalysisError as exc:

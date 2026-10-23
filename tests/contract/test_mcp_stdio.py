@@ -69,6 +69,9 @@ class TestMcpStdio:
         names = [t["name"] for t in resp["result"]["tools"]]
         assert set(names) == {"oido_capabilities", "oido_analyze", "oido_get",
                               "oido_view", "oido_find", "oido_compare"}
+        # 自审修复：inputSchema 必须自包含（外部 URN $ref 宿主解析不了）
+        for tool in resp["result"]["tools"]:
+            assert "urn:" not in json.dumps(tool["inputSchema"]), tool["name"]
 
     def test_capabilities_call(self, server_proc):
         resp = _rpc(server_proc, {"jsonrpc": "2.0", "id": 3, "method": "tools/call",

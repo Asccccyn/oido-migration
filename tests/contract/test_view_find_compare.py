@@ -178,3 +178,30 @@ class TestCompare:
             "left": {"audio_ref": "est:cp5"}, "right": {"audio_ref": "est:cp6"},
             "metrics": ["sadness"]}, headers=_auth())
         assert r2.status_code == 422
+
+class TestBudgetsAndLimits:
+    def test_find_and_compare_response_budgets(self, client):
+        """自审补钉：find ≤2048B / compare ≤4096B（紧凑 UTF-8）——预算即合同。"""
+        _ingest_analyzed(client, "est:bg1", transcript="嗯啊哦")
+        _ingest_analyzed(client, "est:bg2", transcript="嗯")
+        r = client.post("/v1/find", json={"audio_ref": "est:bg1", "query": "啊"}, headers=_auth())
+        assert len(json.dumps(r.json(), ensure_ascii=False, separators=(",", ":")).encode()) <= 2048
+        r2 = client.post("/v1/compare", json={"left": {"audio_ref": "est:bg1"}, "right": {"audio_ref": "est:bg2"}}, headers=_auth())
+        assert len(json.dumps(r2.json(), ensure_ascii=False, separators=(",", ":")).encode()) <= 4096
+
+    def test_ingest_body_limit(self, client):
+        """60MB 上限：Content-Length 声明超限直接 413，不进管道。"""
+        r = client.post("/v1/audio:ingest", content=b"x",
+                        headers={**_auth(), "X-Oido-Audio-Ref": "est:bg3",
+                                 "Content-Length": str(61 * 1024 * 1024)})
+        assert r.status_code == 413
+
+    def test_view_flag_off_disabled(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("OIDO_AUTH_TOKEN", TOKEN)
+        conn = open_db(tmp_path / "meta" / "oido.sqlite3")
+        migrate(conn)
+        cfg = OidoConfig(data_root=tmp_path / "data")  # flags 全关
+        cfg.flags["ingest"] = True
+        c = TestClient(create_app(config=cfg, conn=conn))
+        r = c.get("/v1/analyses/run_x/view?view=pitch", headers=_auth())
+        assert r.status_code == 503 and r.json()["code"] == "SERVICE_DISABLED"
