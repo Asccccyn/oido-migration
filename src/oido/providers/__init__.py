@@ -16,11 +16,14 @@ class ProviderStatus:
 
 
 # v0.1 现状：只登记，不安装。capability 查询必须如实返回。
+# 她 2026-10-24 裁定③：oído=est 的听觉分析子系统，不做语音转写——转写由
+# Siren 链路承担（est 的语音转写来源=siren:transcribe），纯 ASR 占位
+# whisper.cpp 退出登记；其余声学分析类（事件/VAD/说话人/嵌入/编码/caption/
+# 语音质量）为将来接入备忘，保留。
 _REGISTRY: dict[str, ProviderStatus] = {
     "librosa-pyin": ProviderStatus("librosa-pyin", "dsp_f0", "available", "none", None, "DSP 库非推理 provider"),
-    "whisper.cpp": ProviderStatus("whisper.cpp", "asr", "not_configured", "local_only"),
     "sensevoice": ProviderStatus("sensevoice", "asr+event", "not_configured", "local_only",
-                                 note="若采用：仅取 ASR/事件字段，情绪 head 边界丢弃"),
+                                 note="若采用：仅取事件等声学字段（转写归 Siren，不在此接 ASR），情绪 head 边界丢弃"),
     "panns": ProviderStatus("panns", "event", "not_configured", "local_only"),
     "efficientat": ProviderStatus("efficientat", "event", "not_configured", "local_only"),
     "silero-vad": ProviderStatus("silero-vad", "vad", "not_configured", "local_only"),

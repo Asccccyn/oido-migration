@@ -47,8 +47,10 @@ class TestCapabilities:
         assert r.status_code == 200
         providers = {p["name"]: p for p in r.json()["providers"]}
         # 重模型未安装：必须报 not_configured，不得报 available
-        for name in ("whisper.cpp", "sensevoice", "panns", "clap", "dac", "pyannote"):
+        # （2026-10-24 裁定③：纯 ASR 占位 whisper.cpp 退出登记——转写归 Siren）
+        for name in ("sensevoice", "panns", "clap", "dac", "pyannote"):
             assert providers[name]["status"] == "not_configured", name
+        assert "whisper.cpp" not in providers, "纯 ASR 占位已退出（转写归 Siren）"
         # 本地推理 provider 的网络属性必须是 local_only（D05）
         for p in providers.values():
             if p["status"] != "available":
