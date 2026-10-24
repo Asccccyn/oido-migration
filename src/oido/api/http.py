@@ -119,7 +119,7 @@ def create_app(config: OidoConfig | None = None, conn: sqlite3.Connection | None
     def ready() -> dict:
         required_tables = (
             "audio_assets", "audio_origins", "audio_variants", "analysis_runs",
-            "analysis_stages", "evidence_items", "artifacts", "events_outbox",
+            "analysis_stages", "evidence_items", "artifacts",
             "idempotency_records", "deletion_tombstones", "acoustic_baselines",
             "access_audit", "orphan_objects", "audio_transcripts",
         )
