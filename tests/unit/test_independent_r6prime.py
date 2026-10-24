@@ -150,10 +150,13 @@ def test_cancelled_analysis_get_is_terminal_not_retryable(env):
 
 
 def test_queued_transcript_snapshot_matches_execution(env, monkeypatch):
+    # 她 1024 裁定（同 est 3/4）：测试问题在夹具不在产品——转写必须在排队前存在，
+    # 快照才能被记录并被执行采用；原夹具 create 后才插转写却要求执行 hash==请求 hash
+    # （请求记 no-transcript 哨兵）=结构性不可能。改为排队前转写，断言原样。
+    env.conn.execute("INSERT INTO audio_transcripts(audio_id,text,source,created_at) VALUES (?,?,?,datetime('now'))",
+                     (env.audio_id,"排队前就有的合成转写","audit:synthetic"));env.conn.commit()
     run=env.analyses.create(audio_id=env.audio_id,profile="prosody",requested_by="est")
     request=json.loads(env.conn.execute("SELECT request_json FROM analysis_runs WHERE analysis_id=?",(run["analysis_id"],)).fetchone()[0])
-    env.conn.execute("INSERT INTO audio_transcripts(audio_id,text,source,created_at) VALUES (?,?,?,datetime('now'))",
-                     (env.audio_id,"后来才到的合成转写","audit:synthetic"));env.conn.commit()
     seen={}
     def run_pipeline(**kwargs):
         seen.update(kwargs)
