@@ -1,6 +1,4 @@
 """R6′（2026-10-23，她批 R6P 方案）：分析缓存键版本成分 + 取消端点 + find 游标语义。"""
-import base64
-import hashlib
 import json
 import math
 import os
@@ -81,11 +79,3 @@ class TestR6pLifecycle:
         assert c2.status_code == 200 and c2.json()["cancelled"] is True
         conn.close()
 
-    def test_find_cursor_semantics(self):
-        """find 游标编码语义：绑定 analysis+revision+query hash（服务内部由 contract 测试覆盖）。"""
-        cur = base64.urlsafe_b64encode(json.dumps({
-            "a": "an-1", "r": 1,
-            "q": hashlib.sha256("嗯".encode()).hexdigest()[:16], "skip": 3,
-        }).encode()).decode()
-        d = json.loads(base64.urlsafe_b64decode(cur))
-        assert d["a"] == "an-1" and d["r"] == 1 and d["skip"] == 3
