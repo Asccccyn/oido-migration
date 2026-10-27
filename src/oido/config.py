@@ -6,16 +6,14 @@ import os
 from dataclasses import dataclass, field
 from pathlib import Path
 
-# 上线开关全集（EXEC §9.1）；默认全关——任何生产接入都须显式打开
+# 上线开关全集（EXEC §9.1）；默认全关——任何生产接入都须显式打开。
+# B6（联合审计 2026-10-27）删除五个仅声明无消费者的开关（est_evidence/siren_sidecar/
+# realtime/memory_links/personal_baseline）：只出现在本声明与文档，无 enabled() 行为
+# 消费者——声明不等于能力；真接入对应功能时再加回（带真实消费者）。
 FEATURE_FLAGS = (
     "ingest",
     "offline_analysis",
     "mcp_tools",
-    "est_evidence",
-    "siren_sidecar",
-    "realtime",
-    "memory_links",
-    "personal_baseline",
 )
 
 

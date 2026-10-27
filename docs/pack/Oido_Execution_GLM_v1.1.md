@@ -571,7 +571,7 @@ Siren 已经使用的供应商属于 Siren 自己的既有链路，不等于 oí
 
 ### 9.1 灰度与回滚顺序
 
-先确认基线健康、端口、磁盘、备份、密钥和独立守护，再启用新服务；不要边部署边修改Cloudflare/VPN来碰运气。上线开关至少分：ingest、offline_analysis、mcp_tools、est_evidence、siren_sidecar、realtime、memory_links、personal_baseline。
+先确认基线健康、端口、磁盘、备份、密钥和独立守护，再启用新服务；不要边部署边修改Cloudflare/VPN来碰运气。上线开关至少分：ingest、offline_analysis、mcp_tools（2026-10-27 联合审计 B6：est_evidence/siren_sidecar/realtime/memory_links/personal_baseline 仅声明无行为消费者，已从开关全集删除——声明不等于能力，真接入时随真实消费者加回）。
 
 每一步报告“仅mock / 合成fixture / 获授权真实音频 / 生产样本”的证据等级。灰度期发现异常先禁新增听觉计算或adapter，不撤掉原Siren语音。迁移回滚以快照与向后兼容恢复为准，禁止用git reset解决数据schema变更；禁止回滚已生效的用户删除墓碑。
 
