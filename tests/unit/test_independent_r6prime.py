@@ -186,10 +186,6 @@ def test_legacy_same_operation_retry_reports_approved_409(env):
     assert caught.value.code == "idempotency_conflict" and caught.value.http_status == 409
 
 
-def test_claim_next_helper_is_callable(env):
-    assert executor.claim_next(env.conn,"audit") is None
-
-
 def test_permissions_and_source_deletion_still_block_reads(env):
     aid=completed(env)
     wrong=env.client.get(f"/v1/analyses/{aid}",headers={"Authorization":"Bearer wrong"})

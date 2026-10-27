@@ -118,13 +118,10 @@ class IngestService:
         )
         audio_id = registered["audio_id"]
         if transcript is not None:
-            text = transcript.get("text")
-            if not isinstance(text, str) or not text.strip():
-                raise RefError("invalid_input", "transcript.text must be a non-empty string")
-            source = transcript.get("source")
-            if not isinstance(source, str) or not source.strip():
-                raise RefError("invalid_input", "transcript.source is required (e.g. siren:transcribe)")
-            # register_upload 已写 audio_origins（同 kind+external_id）；此处只补转写行
+            # JV-Q1：入口已统一校验 text/source（上方 transcript is not None 分支），
+            # 此处不再第二遍重复校验；register_upload 已写 audio_origins，只补转写行
+            text = transcript["text"]
+            source = transcript["source"]
             try:
                 self.conn.execute(
                     """INSERT INTO audio_transcripts (audio_id, text, source, source_revision, created_at)
