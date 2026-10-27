@@ -15,22 +15,13 @@ import numpy as np
 
 from oido.domain.ids import new_id, utc_now_rfc3339
 from oido.dsp.f0 import pyin_f0
+from oido.prosody.pipeline import frames_db as _frames_db_full
 from oido.dsp.render import VIEWS, RenderError, render_energy, render_overview, render_pitch, render_spectrogram, render_waveform
 from oido.service.variants import VariantService
 from oido.storage.objects import ObjectStore
 
 RMS_FRAME, RMS_HOP = 480, 160          # 与 prosody/pipeline 同口径（16k 下 30ms/10ms）
 F0_HOP = 256
-
-
-def _frames_db(samples: np.ndarray) -> np.ndarray:
-    n = (samples.shape[0] - RMS_FRAME) // RMS_HOP + 1
-    if n <= 0:
-        return np.array([])
-    idx = np.arange(RMS_FRAME)[None, :] + RMS_HOP * np.arange(n)[:, None]
-    frames = samples[idx]
-    rms = np.sqrt(np.mean(np.square(frames.astype(np.float64)), axis=1))
-    return np.where(rms > 0, 20.0 * np.log10(np.maximum(rms, 1e-12)), -120.0)
 
 
 class ViewService:
@@ -85,18 +76,26 @@ class ViewService:
                 raise RenderError("insufficient_signal", "range covers no samples")
             samples = samples[a:b]
             t1_s = t0_s + samples.shape[0] / sr
-        f0 = pyin_f0(samples, sr=sr, hop_length=F0_HOP)
-        hop_s = F0_HOP / sr
+        # JV-18（联合审计 2026-10-26）：F0 只在图需要时计算——waveform/energy
+        # 此前也无条件 pYIN（同步 ASGI 请求被 CPU 长阻塞，同 loop 健康/取消等待）。
+        # 测量正确性不变：pitch/overview 的 F0 路径与数值完全照旧。
+        if view in ("pitch", "overview"):
+            f0 = pyin_f0(samples, sr=sr, hop_length=F0_HOP)
+            hop_s = F0_HOP / sr
+            f0_hz = f0["f0_hz"] or []
+        else:
+            f0_hz = []
+            hop_s = F0_HOP / sr
         if view == "waveform":
             png = render_waveform(samples, sr, t0_s, t1_s)
         elif view == "spectrogram":
             png = render_spectrogram(samples, sr, t0_s, t1_s)
         elif view == "pitch":
-            png = render_pitch(f0["f0_hz"] or [], hop_s, t0_s, t1_s)
+            png = render_pitch(f0_hz, hop_s, t0_s, t1_s)
         elif view == "energy":
-            png = render_energy(_frames_db(samples), RMS_HOP / sr, t0_s, t1_s)
+            png = render_energy(_frames_db_full(samples)[0], RMS_HOP / sr, t0_s, t1_s)  # JV-Q1：与 pipeline 共用同一分帧 RMS→dBFS
         else:
-            png = render_overview(samples, sr, f0["f0_hz"] or [], hop_s, t0_s, t1_s)
+            png = render_overview(samples, sr, f0_hz, hop_s, t0_s, t1_s)
 
         artifact_id = new_id("art")
         object_key = f"derivatives/{artifact_id}.png"

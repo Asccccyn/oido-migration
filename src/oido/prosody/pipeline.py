@@ -36,7 +36,7 @@ class ProsodyResult:
     artifacts: list[dict] = field(default_factory=list)
 
 
-def _frames_db(samples: np.ndarray) -> tuple[np.ndarray, float]:
+def frames_db(samples: np.ndarray) -> tuple[np.ndarray, float]:
     """分帧 RMS→dBFS 序列（10ms hop）。"""
     n = (samples.shape[0] - RMS_FRAME) // RMS_HOP + 1
     if n <= 0:
@@ -106,7 +106,7 @@ def run_prosody(
                        "detail": {"method": f0_result["method"], "frames": len(f0_result["f0_hz"] or [])}})
 
     # ── RMS 帧 + 有声分段/停顿 ──────────────────────────────────────────
-    db, rms_hop_s = _frames_db(samples)
+    db, rms_hop_s = frames_db(samples)
     hop_s = F0_HOP / float(sr)
     segs = segment_utterance(
         f0_hz=np.array([np.nan if v is None else v for v in (f0_result["f0_hz"] or [])], dtype=float),
