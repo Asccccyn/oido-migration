@@ -46,9 +46,13 @@ class FindService:
         if mode not in ("substring", "fuzzy"):
             raise AnalysisError("invalid_input", "mode must be substring|fuzzy", 422)
         audio_id = self.ingest.resolve(audio_ref, principal=principal)
+        # JV-07（联合审计 2026-10-26）：find 无 range 语义=查全文——只选**无裁剪范围**
+        # 的完成分析。此前"最新完成"可能是 inspect_range 的局部分析，导致看过一段后
+        # 全文 find 失效（单元只覆盖局部）。局部证据请显式用带 range 的分析结果。
         row = self.analyses.conn.execute(
             """SELECT analysis_id, status, revision FROM analysis_runs
                WHERE audio_id = ? AND requested_by = ? AND status IN ('succeeded','partial')
+                 AND json_extract(request_json, '$.range') IS NULL
                ORDER BY updated_at DESC LIMIT 1""",
             (audio_id, principal),
         ).fetchone()

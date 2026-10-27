@@ -117,6 +117,10 @@ def _call_tool(name: str, args: dict, ctx: _Ctx) -> dict:
                     analysis_id=created["analysis_id"], revision=run["revision"], facts=facts)
         if run["status"] == "failed":
             return projections.error_body("ANALYSIS_FAILED", run.get("error_code") or "pipeline_failed")
+        # JV-10（联合审计 2026-10-26）：cancelled 是终态（与 HTTP 合同一致）——
+        # 此前落入 else 被当 queued 重放，模型会永远轮询已取消任务
+        if run["status"] == "cancelled":
+            return projections.error_body("ANALYSIS_CANCELLED", "analysis was cancelled", retryable=False)
         return projections.analysis_ticket(
             created["analysis_id"], "running" if run["status"] == "running" else "queued")
     if name == "oido_get":
@@ -126,6 +130,10 @@ def _call_tool(name: str, args: dict, ctx: _Ctx) -> dict:
         run = ctx.analyses.get(analysis_id, principal="est")
         if args.get("revision") is not None and args["revision"] != run["revision"]:
             raise RefError("snapshot_changed", "requested analysis revision is unavailable", 409)
+        if run["status"] == "failed":
+            return projections.error_body("ANALYSIS_FAILED", "analysis failed (terminal)", retryable=False)
+        if run["status"] == "cancelled":
+            return projections.error_body("ANALYSIS_CANCELLED", "analysis was cancelled", retryable=False)
         if run["status"] not in ("succeeded", "partial"):
             return projections.error_body("NOT_READY_YET", f"analysis is {run['status']}", retryable=True)
         facts = analysis_worker.load_facts(ctx.conn, analysis_id)
@@ -156,6 +164,10 @@ def _call_tool(name: str, args: dict, ctx: _Ctx) -> dict:
         run = ctx.analyses.get(analysis_id, principal="est")
         if args.get("revision") is not None and args["revision"] != run["revision"]:
             raise RefError("snapshot_changed", "requested analysis revision is unavailable", 409)
+        if run["status"] == "failed":
+            return projections.error_body("ANALYSIS_FAILED", "analysis failed (terminal)", retryable=False)
+        if run["status"] == "cancelled":
+            return projections.error_body("ANALYSIS_CANCELLED", "analysis was cancelled", retryable=False)
         if run["status"] not in ("succeeded", "partial"):
             return projections.error_body("NOT_READY_YET", f"analysis is {run['status']}", retryable=True)
         out = ctx.views.render(analysis_id=analysis_id, view=view, range_ms=rng)
@@ -163,10 +175,14 @@ def _call_tool(name: str, args: dict, ctx: _Ctx) -> dict:
                 "analysis_id": analysis_id, "view": view, "revision": run["revision"],
                 "artifact_id": out["artifact_id"], "media_type": "image/png"}
     if name == "oido_find":
+        # F-06（跨仓预审 2026-10-25）：cursor 是已声明合同（mcp-tools.v2.json）——
+        # 此前未转发，MCP 续页永远重复首页；HTTP 面（/v1/find）与算法本身一直支持。
+        cursor = args.get("cursor")
         return ctx.finder.find(
             principal="est", audio_ref=_resolve_ref_arg(args, ctx),
             query=str(args.get("query", "")), mode=str(args.get("mode", "substring")),
-            limit=int(args.get("limit", 3)) if isinstance(args.get("limit", 3), int) else 3)
+            limit=int(args.get("limit", 3)) if isinstance(args.get("limit", 3), int) else 3,
+            cursor=cursor if isinstance(cursor, str) and cursor else None)
     if name == "oido_compare":
         left, right = args.get("left"), args.get("right")
         if not isinstance(left, dict) or not isinstance(right, dict):

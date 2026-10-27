@@ -25,9 +25,13 @@ class CompareService:
 
     def _side(self, principal: str, audio_ref: str, range_ms: Optional[list[int]]) -> dict:
         audio_id = self.ingest.resolve(audio_ref, principal=principal)
+        # JV-07（联合审计 2026-10-26）：compare 无 range 语义=比全文——只选无裁剪
+        # 范围的完成分析；并在 side 中如实标注实际比较范围（局部分析的 duration
+        # 不再冒充整段）。
         row = self.analyses.conn.execute(
             """SELECT analysis_id, status, revision FROM analysis_runs
                WHERE audio_id = ? AND requested_by = ? AND status IN ('succeeded','partial')
+                 AND json_extract(request_json, '$.range') IS NULL
                ORDER BY updated_at DESC LIMIT 1""",
             (audio_id, principal),
         ).fetchone()
@@ -38,6 +42,7 @@ class CompareService:
             raise AnalysisError("dependency_failed", f"analysis {row['analysis_id']} has no facts", 500)
         pauses = facts.get("pauses") or []
         units = facts.get("units") or []
+        side_range = facts.get("range_ms")
         m: dict[str, Optional[float]] = {
             "duration_s": round(facts.get("duration_s", 0.0), 3),
             "voiced_total_s": round(facts.get("voiced_total_s", 0.0), 3),
@@ -77,6 +82,9 @@ class CompareService:
                 "revision": row["revision"], "metrics": m,
                 "alignment_source": facts.get("alignment_source"),
                 "range_ms": range_ms,
+                # JV-07：实际参与比较的分析事实范围（null=整段录音；不与请求
+                # 裁剪 range_ms 混淆——后者是本次查询的进一步收窄）
+                "analysis_range_ms": side_range,
                 "downmix_note": facts.get("downmix_note")}
 
     def compare(self, *, principal: str, left: dict, right: dict, metrics: Optional[list[str]] = None) -> dict:
@@ -107,8 +115,8 @@ class CompareService:
                                     and (ls["alignment_source"] or rs["alignment_source"]) else "measured")
             differences.append(entry)
         result = {
-            "left": {k: ls[k] for k in ("audio_ref", "analysis_id", "revision")},
-            "right": {k: rs[k] for k in ("audio_ref", "analysis_id", "revision")},
+            "left": {k: ls[k] for k in ("audio_ref", "analysis_id", "revision", "analysis_range_ms")},
+            "right": {k: rs[k] for k in ("audio_ref", "analysis_id", "revision", "analysis_range_ms")},
             "metrics": differences,
             "limits": limits,
             # 无批准个人基线：明确拒绝"比平时"表述（05），不做任何心理比较

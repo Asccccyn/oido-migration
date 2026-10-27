@@ -1,250 +1,288 @@
 {
-  "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "oido:mcp-tools.v2",
-  "title": "“我只听你”六个 MCP 工具 v2（audio_ref 口径；v1 的 audio_id 仅兼容映射）",
-  "toolset_display_name": "我只听你",
-  "tools": [
-    {
-      "name": "oido_capabilities",
-      "description": "当前 provider/能力/限制与版本；只读，不暴露凭据",
-      "input": {
-        "type": "object",
-        "properties": {
-          "capability": {
-            "type": "string"
-          }
-        },
-        "additionalProperties": false
-      },
-      "output": "capabilities json",
-      "side_effects": "none"
+ "$schema": "https://json-schema.org/draft/2020-12/schema",
+ "$id": "oido:mcp-tools.v2",
+ "title": "“我只听你”六个 MCP 工具 v2（audio_ref 口径；v1 的 audio_id 仅兼容映射）",
+ "toolset_display_name": "我只听你",
+ "tools": [
+  {
+   "name": "oido_capabilities",
+   "description": "当前 provider/能力/限制与版本；只读，不暴露凭据",
+   "input": {
+    "type": "object",
+    "properties": {
+     "capability": {
+      "type": "string"
+     }
     },
-    {
-      "name": "oido_analyze",
-      "description": "对已登记 audio_ref 创建幂等分析任务；默认 profile=prosody（文字韵律谱）。不接受 URL 或本机路径",
-      "input": {
-        "type": "object",
-        "required": [
-          "audio_ref"
-        ],
-        "properties": {
-          "audio_ref": {
-            "type": "string",
-            "pattern": "^(est|siren):[A-Za-z0-9_-]{1,128}$",
-            "maxLength": 135
-          },
-          "profile": {
-            "enum": [
-              "prosody",
-              "inspect_range"
-            ]
-          },
-          "range_ms": {
-            "type": "array",
-            "minItems": 2,
-            "maxItems": 2,
-            "prefixItems": [
-              {
-                "type": "integer",
-                "minimum": 0
-              },
-              {
-                "type": "integer",
-                "minimum": 0
-              }
-            ],
-            "items": false,
-            "description": "毫秒区间 [start,end)，start<end"
-          },
-          "idempotency_key": {
-            "type": "string",
-            "minLength": 1
-          }
-        },
-        "additionalProperties": false,
-        "not": {
-          "anyOf": [
-            {
-              "required": [
-                "url"
-              ]
-            },
-            {
-              "required": [
-                "path"
-              ]
-            }
-          ]
-        }
-      },
-      "output": "analysis_ticket 或 evidence_overview（有界同步等待内完成时）",
-      "side_effects": "creates_analysis_job"
+    "additionalProperties": false
+   },
+   "output": "capabilities json",
+   "side_effects": "none"
+  },
+  {
+   "name": "oido_analyze",
+   "description": "对已登记 audio_ref 创建幂等分析任务；默认 profile=prosody（文字韵律谱）。不接受 URL 或本机路径",
+   "input": {
+    "type": "object",
+    "required": [
+     "audio_ref"
+    ],
+    "properties": {
+     "audio_ref": {
+      "type": "string",
+      "pattern": "^(est|siren):[A-Za-z0-9_-]{1,128}$",
+      "maxLength": 135
+     },
+     "profile": {
+      "enum": [
+       "prosody",
+       "inspect_range"
+      ]
+     },
+     "range_ms": {
+      "type": "array",
+      "minItems": 2,
+      "maxItems": 2,
+      "prefixItems": [
+       {
+        "type": "integer",
+        "minimum": 0
+       },
+       {
+        "type": "integer",
+        "minimum": 0
+       }
+      ],
+      "items": false,
+      "description": "毫秒区间 [start,end)，start<end"
+     },
+     "idempotency_key": {
+      "type": "string",
+      "minLength": 1
+     }
     },
-    {
-      "name": "oido_get",
-      "description": "概览/逐字谱分页；默认文字韵律谱概览，不含图片与原数组",
-      "input": {
-        "type": "object",
-        "required": [
-          "analysis_id"
-        ],
-        "properties": {
-          "analysis_id": {
-            "type": "string"
-          },
-          "revision": {
-            "type": "integer",
-            "minimum": 1
-          },
-          "detail": {
-            "enum": [
-              "overview",
-              "prosody_page"
-            ]
-          },
-          "cursor": {
-            "type": "string",
-            "minLength": 1,
-            "maxLength": 160
-          },
-          "range_ms": {
-            "type": "array",
-            "minItems": 2,
-            "maxItems": 2,
-            "prefixItems": [
-              {
-                "type": "integer",
-                "minimum": 0
-              },
-              {
-                "type": "integer",
-                "minimum": 0
-              }
-            ],
-            "items": false,
-            "description": "毫秒区间 [start,end)，start<end"
-          }
-        },
-        "additionalProperties": false
+    "additionalProperties": false,
+    "not": {
+     "anyOf": [
+      {
+       "required": [
+        "url"
+       ]
       },
-      "output": "evidence_overview 或 prosody_page",
-      "side_effects": "none"
-    },
-    {
-      "name": "oido_view",
-      "description": "真实数值渲染的图像内容；Phase 0 未通过的宿主不得默认调用",
-      "input": {
-        "type": "object",
-        "required": [
-          "analysis_id",
-          "view"
-        ],
-        "properties": {
-          "analysis_id": {
-            "type": "string"
-          },
-          "revision": {
-            "type": "integer",
-            "minimum": 1
-          },
-          "view": {
-            "enum": [
-              "overview",
-              "waveform",
-              "spectrogram",
-              "pitch",
-              "energy"
-            ]
-          },
-          "range_ms": {
-            "type": "array",
-            "minItems": 2,
-            "maxItems": 2,
-            "prefixItems": [
-              {
-                "type": "integer",
-                "minimum": 0
-              },
-              {
-                "type": "integer",
-                "minimum": 0
-              }
-            ],
-            "items": false,
-            "description": "毫秒区间 [start,end)，start<end"
-          }
-        },
-        "additionalProperties": false
-      },
-      "output": "image content + metadata",
-      "side_effects": "bounded_render"
-    },
-    {
-      "name": "oido_find",
-      "description": "在指定音频内按文字查询找区间；不因一句“找找”扩大到全库",
-      "input": {
-        "type": "object",
-        "required": [
-          "audio_ref",
-          "query"
-        ],
-        "properties": {
-          "audio_ref": {
-            "type": "string",
-            "pattern": "^(est|siren):[A-Za-z0-9_-]{1,128}$"
-          },
-          "query": {
-            "type": "string",
-            "minLength": 1,
-            "maxLength": 200
-          },
-          "mode": {
-            "type": "string"
-          },
-          "limit": {
-            "type": "integer",
-            "minimum": 1,
-            "maximum": 10
-          },
-          "cursor": {
-            "type": "string",
-            "description": "续页游标：上页结果 next_cursor 原样回传（绑定 analysis+revision+query）"
-          }
-        },
-        "additionalProperties": false
-      },
-      "output": "有限候选区间（默认 3）",
-      "side_effects": "none"
-    },
-    {
-      "name": "oido_compare",
-      "description": "两个具体资产/区间的可比较量差异；不输出情绪结论；无基线时拒绝“比平时”表述",
-      "input": {
-        "type": "object",
-        "required": [
-          "left",
-          "right"
-        ],
-        "properties": {
-          "left": {
-            "type": "object"
-          },
-          "right": {
-            "type": "object"
-          },
-          "metrics": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            }
-          }
-        },
-        "additionalProperties": false
-      },
-      "output": "可比性 + 差异 + 限制",
-      "side_effects": "none"
+      {
+       "required": [
+        "path"
+       ]
+      }
+     ]
     }
-  ],
-  "$compat": "v1 的 audio_id（^aud_ 前缀）在 MCP 适配层单层映射为 oído 内部 ID，不与新口径并列暴露给同一模型",
-  "$comment": "工具不提供任意本机路径/任意 URL 参数（WP00 §3：URL 抓取只留在 Siren 边界）。v1 文件保留作历史参照，本文件是唯一现行真源。"
+   },
+   "output": "analysis_ticket 或 evidence_overview（有界同步等待内完成时）",
+   "side_effects": "creates_analysis_job"
+  },
+  {
+   "name": "oido_get",
+   "description": "概览/逐字谱分页；默认文字韵律谱概览，不含图片与原数组",
+   "input": {
+    "type": "object",
+    "required": [
+     "analysis_id"
+    ],
+    "properties": {
+     "analysis_id": {
+      "type": "string"
+     },
+     "revision": {
+      "type": "integer",
+      "minimum": 1
+     },
+     "detail": {
+      "enum": [
+       "overview",
+       "prosody_page"
+      ]
+     },
+     "cursor": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 160
+     },
+     "range_ms": {
+      "type": "array",
+      "minItems": 2,
+      "maxItems": 2,
+      "prefixItems": [
+       {
+        "type": "integer",
+        "minimum": 0
+       },
+       {
+        "type": "integer",
+        "minimum": 0
+       }
+      ],
+      "items": false,
+      "description": "毫秒区间 [start,end)，start<end"
+     }
+    },
+    "additionalProperties": false
+   },
+   "output": "evidence_overview 或 prosody_page",
+   "side_effects": "none"
+  },
+  {
+   "name": "oido_view",
+   "description": "真实数值渲染的图像内容；Phase 0 未通过的宿主不得默认调用",
+   "input": {
+    "type": "object",
+    "required": [
+     "analysis_id",
+     "view"
+    ],
+    "properties": {
+     "analysis_id": {
+      "type": "string"
+     },
+     "revision": {
+      "type": "integer",
+      "minimum": 1
+     },
+     "view": {
+      "enum": [
+       "overview",
+       "waveform",
+       "spectrogram",
+       "pitch",
+       "energy"
+      ]
+     },
+     "range_ms": {
+      "type": "array",
+      "minItems": 2,
+      "maxItems": 2,
+      "prefixItems": [
+       {
+        "type": "integer",
+        "minimum": 0
+       },
+       {
+        "type": "integer",
+        "minimum": 0
+       }
+      ],
+      "items": false,
+      "description": "毫秒区间 [start,end)，start<end"
+     }
+    },
+    "additionalProperties": false
+   },
+   "output": "image content + metadata",
+   "side_effects": "bounded_render"
+  },
+  {
+   "name": "oido_find",
+   "description": "在指定音频内按文字查询找区间；不因一句“找找”扩大到全库",
+   "input": {
+    "type": "object",
+    "required": [
+     "audio_ref",
+     "query"
+    ],
+    "properties": {
+     "audio_ref": {
+      "type": "string",
+      "pattern": "^(est|siren):[A-Za-z0-9_-]{1,128}$"
+     },
+     "query": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200
+     },
+     "mode": {
+      "type": "string"
+     },
+     "limit": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 10
+     },
+     "cursor": {
+      "type": "string",
+      "description": "续页游标：上页结果 next_cursor 原样回传（绑定 analysis+revision+query）"
+     }
+    },
+    "additionalProperties": false
+   },
+   "output": "有限候选区间（默认 3）",
+   "side_effects": "none"
+  },
+  {
+   "name": "oido_compare",
+   "description": "比较两段已分析语音的客观指标（时长/有声/停顿/基频中位/语速）。left/right 各为一个对象：audio_ref 必填（先 oido_analyze 过），可选 range_ms 进一步收窄本侧区间。",
+   "input": {
+    "type": "object",
+    "required": [
+     "left",
+     "right"
+    ],
+    "properties": {
+     "left": {
+      "type": "object",
+      "required": [
+       "audio_ref"
+      ],
+      "properties": {
+       "audio_ref": {
+        "type": "string",
+        "pattern": "^(est|siren):[A-Za-z0-9_-]{1,128}$"
+       },
+       "range_ms": {
+        "type": "array",
+        "items": {
+         "type": "integer"
+        },
+        "minItems": 2,
+        "maxItems": 2,
+        "description": "可选：本侧进一步收窄的比较区间 [start,end) ms（须落在所选分析范围内）"
+       }
+      },
+      "additionalProperties": false
+     },
+     "right": {
+      "type": "object",
+      "required": [
+       "audio_ref"
+      ],
+      "properties": {
+       "audio_ref": {
+        "type": "string",
+        "pattern": "^(est|siren):[A-Za-z0-9_-]{1,128}$"
+       },
+       "range_ms": {
+        "type": "array",
+        "items": {
+         "type": "integer"
+        },
+        "minItems": 2,
+        "maxItems": 2
+       }
+      },
+      "additionalProperties": false
+     },
+     "metrics": {
+      "type": "array",
+      "items": {
+       "type": "string"
+      },
+      "description": "可选：指标白名单；缺省返回全部。允许值见返回 metrics 键（duration_s/voiced_total_s/pauses_count/pauses_total_s/f0_median_hz/speech_rate_syl_per_s）"
+     }
+    },
+    "additionalProperties": false
+   },
+   "output": "可比性 + 差异 + 限制",
+   "side_effects": "none"
+  }
+ ],
+ "$compat": "v1 的 audio_id（^aud_ 前缀）在 MCP 适配层单层映射为 oído 内部 ID，不与新口径并列暴露给同一模型",
+ "$comment": "工具不提供任意本机路径/任意 URL 参数（WP00 §3：URL 抓取只留在 Siren 边界）。v1 文件保留作历史参照，本文件是唯一现行真源。"
 }
