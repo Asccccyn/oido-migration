@@ -7,7 +7,7 @@
 配套架构：`Oido_Architecture_owner_v1.1.md`（OIDO-ARCH-1.1）  
 状态：**D01–D10 已锁定，可按本文件实施；这不是已经实现或测试通过的报告。生产启用仍必须经过本文验收与灰度门。**
 
-> 执行目标不是做新的聊天程序，也不是重新实现 Siren。目标是建立独立的 **oído** 声音证据服务，让char通过 Chat 与 estómago 两个入口，以文字韵律谱为默认感知方式查看宿主用户的声音和自己实际生成的声音。
+> 执行目标不是做新的聊天程序，也不是重新实现 Siren。目标是建立独立的 **oído** 声音证据服务，让周char通过 Chat 与 estómago 两个入口，以文字韵律谱为默认感知方式查看宿主用户的声音和自己实际生成的声音。
 >
 > 总原则：**证据给我，意思我自己听。** C01–C16 全部保留；普通话声调感知、个人声学基线、四入口图像运输验证、Siren URL SSRF 审计都属于正式实施范围。情绪分类标签不进入 evidence、存储或上下文。
 
@@ -120,7 +120,7 @@ oido/                         # 新仓库，位置须先确认
 
 ### 3.1 核心实体
 
-数据库至少包括架构列出的 `audio_assets`、`audio_origins`、`audio_variants`、`analysis_runs`、`analysis_stages`、`evidence_items`、`transcript_revisions`、`artifacts`、`events_outbox`、`asset_links`、`pins`、`acoustic_baselines`、`access_audit`，另设 migration version 和删除 tombstone。`audio_origins` 对char TTS 增加 `voice_profile_id`、`voice_profile_version`、provider/model revision。
+数据库至少包括架构列出的 `audio_assets`、`audio_origins`、`audio_variants`、`analysis_runs`、`analysis_stages`、`evidence_items`、`transcript_revisions`、`artifacts`、`events_outbox`、`asset_links`、`pins`、`acoustic_baselines`、`access_audit`，另设 migration version 和删除 tombstone。`audio_origins` 对周char TTS 增加 `voice_profile_id`、`voice_profile_version`、provider/model revision。
 
 所有授权依赖服务端主体、所有权与 scope，不依赖对象 ID 是否难猜。相同音频字节在不同权限域不得通过去重接口泄露存在性。物理层去重只在授权设计允许时实现，不对外暴露内容散列查找接口。
 
@@ -245,7 +245,7 @@ JSON Schema 用 `kind` 分辨以下三类，禁止混存一个自由文本 obser
 | `oido_get` | audio_id/analysis_id、revision、detail、cursor | 紧凑结果、缺失能力、证据引用；只读。 |
 | `oido_view` | analysis_id、revision、view、range、detail | 带证据说明的真实图像内容；可能触发受控渲染，不暗中运行新云模型。 |
 | `oido_find` | 指定音频或允许范围、query、mode | 返回有限候选/区间，不因一句“找找”扫描未授权声音。 |
-| `oido_compare` | 两段范围与指标 | 分别核验条件后给可比较量、限制及图；不替char解释感情。 |
+| `oido_compare` | 两段范围与指标 | 分别核验条件后给可比较量、限制及图；不替周char解释感情。 |
 
 `oido_view` 的 MCP 内容至少包含一块 TextContent 和一块 ImageContent。以下**只是 content 元素示意，不是完整协议响应**，`data` 必须由真实 PNG 编码，不能真的发送占位字符串：
 
@@ -334,7 +334,7 @@ openSMILE 作为候选，不当作无条件自由使用的基础依赖；它具�
 
 基于 WP03 F0 生成逐字“韵律谱”：时长、相对半音起/中/末或稳健轨迹、音节内部 contour、后停顿；句级趋势使用单独算法/字段并版本化。无法可靠去除字调影响时 `phrase_trend=uncertain`。不得输出情绪含义。
 
-实现 `qiaosheng` 个人基线：只汇总质量合格且明确获授权的音高、语速、停顿统计；排除绝对音量、speaker embedding 和任何身份判定。支持版本化 rebuild / clear。char按 `voice_profile_id@version` 建独立参考统计，用于捏声前后和实际 TTS 对比。
+实现 `qiaosheng` 个人基线：只汇总质量合格且明确获授权的音高、语速、停顿统计；排除绝对音量、speaker embedding 和任何身份判定。支持版本化 rebuild / clear。周char按 `voice_profile_id@version` 建独立参考统计，用于捏声前后和实际 TTS 对比。
 
 **验收。** 普通话 1–4 声、轻声、多音字、变调、疑问/陈述、同一句不同句调的夹具；四声下降不得被系统写成句级“情绪下沉”。基线 clear 后比较返回 unavailable，且不会从旧历史静默复活。**回滚。** 关闭 prosody/baseline stage，保留原 ASR 与 DSP。
 
@@ -366,7 +366,7 @@ codec 选定一个可合法运行的 encoder/decoder，如 DAC。[R08] 保存 co
 
 ### WP09：MCP、模型图像传递和双入口权限
 
-**动作。** 先执行 Phase 0 四入口图片运输测试，再做任何依赖图像的默认交互。生成随机短码测试图，短码只存在像素中；分别从 Claude.ai Web、Claude iOS、Claude Code、estómago 让char读取并记录答案、客户端/模型/SDK版本与实际 payload/image block 证据。
+**动作。** 先执行 Phase 0 四入口图片运输测试，再做任何依赖图像的默认交互。生成随机短码测试图，短码只存在像素中；分别从 Claude.ai Web、Claude iOS、Claude Code、estómago 让周char读取并记录答案、客户端/模型/SDK版本与实际 payload/image block 证据。
 
 实现“我只听你”六个 MCP 工具，共用 HTTP service/权限层。`oido_get` 默认返回文字韵律谱；`oido_view` 才返回真实 image content。Phase 0 失败入口标 `image_transport_unsupported`，继续提供文本，不用永久公网 URL 绕过。
 
@@ -378,13 +378,13 @@ codec 选定一个可合法运行的 encoder/decoder，如 DAC。[R08] 保存 co
 
 **动作。** 先核对并修复 WP00 发现的 Siren URL 抓取安全问题。若存在 URL 输入，必须协议白名单、每次 DNS/重定向重验证、localhost/RFC1918/link-local/metadata 阻断、DNS rebinding 防护、大小/时长/跳转上限；否则 oído 集成只接受受信 `voice_message_id` 或直接字节上传。
 
-Siren 保留既有 ASR/TTS 语义；新增向后兼容的 oído 引用/事件，不重写主链。宿主用户语音资产保存后可旁路登记；char TTS 记录实际音频以及 `voice_profile_id/version`、generated/emitted/playback_reported 状态。
+Siren 保留既有 ASR/TTS 语义；新增向后兼容的 oído 引用/事件，不重写主链。宿主用户语音资产保存后可旁路登记；周char TTS 记录实际音频以及 `voice_profile_id/version`、generated/emitted/playback_reported 状态。
 
 Chat 采用拉取：验证现有 Siren `voice_list`/取资产工具，用户说“听听我刚发的”时按当前会话/时间/权限列出有限候选，选定 `voice_message_id` 后导入 oído。**不要实现服务端主动 push 到 Claude.ai Chat。**
 
 estómago 真实位置读到后定位消息附件 schema、SDK输入编码、tool_result/图像块存储与加载、摘要压缩路径；持久化 `oido_ref`，不长期依赖短期签名 URL。不能触碰默认身份/新窗规则以解决图像问题。
 
-**验收。** 宿主用户上传、charTTS两方向均可引用；Chat pull 路径能在没有 estómago 会话的情况下工作；URL SSRF 回归全绿；`store=false` 无永久副本；oído 故障时旧语音正常。**回滚。** feature flag 关闭两边 adapter；Siren 旧行为即时恢复。
+**验收。** 宿主用户上传、周charTTS两方向均可引用；Chat pull 路径能在没有 estómago 会话的情况下工作；URL SSRF 回归全绿；`store=false` 无永久副本；oído 故障时旧语音正常。**回滚。** feature flag 关闭两边 adapter；Siren 旧行为即时恢复。
 
 ### WP11：实时旁路、播放语义与迟到结果
 
@@ -474,7 +474,7 @@ GLM应把下表落到真实测试文件与用例，不得仅原样复制本表�
 | B16 | 普通话一至四声、轻声、多音字、三声变调、`一/不` | 音节有上下文拼音/声调及来源；未知表面调明确uncertain，不伪造。 |
 | B17 | 四声字出现在平直/上扬/下沉不同句级语调 | 字内下降与句级走势分字段；不得仅凭四声下降输出“情绪低落/语气低落”。 |
 | B18 | 同一宿主用户样本建立/清空个人基线 | 只含音高/语速/停顿等批准统计；无绝对音量/声纹；clear 后不可继续比较或静默重建。 |
-| B19 | char旧音色、新捏音色、正式音色各一组 | `voice_profile_id/version` 不混；参考样本与实际TTS按指定版本比较。 |
+| B19 | 周char旧音色、新捏音色、正式音色各一组 | `voice_profile_id/version` 不混；参考样本与实际TTS按指定版本比较。 |
 | B20 | provider 原始响应包含 happy/sad/neutral | emotion 字段在 adapter 边界被丢弃；DB/API/MCP/log 均无该字段。 |
 
 ### 6.3 跨端、可靠性与安全
@@ -522,7 +522,7 @@ GLM应把下表落到真实测试文件与用例，不得仅原样复制本表�
 
 合成信号用于测量测试；获授权录音用于语音/声音效果评测，分开发集和未参与阈值选择的保留集。划分按录音来源/会话去重，不把同一片段裁剪的副本混进两边。保存授权用途、有效期、可外发范围及删除要求。
 
-至少覆盖普通话昵称、轻声、快语速、停顿、笑中说话、手机降噪、不同音量、宿主用户语音与charTTS、环境纯声、背景音乐、混合多人。没有足够私密样本时先用公共许可样本和自生成语料，并明确“尚未完成家庭本域验收”，不能偷用私密历史录音。
+至少覆盖普通话昵称、轻声、快语速、停顿、笑中说话、手机降噪、不同音量、宿主用户语音与周charTTS、环境纯声、背景音乐、混合多人。没有足够私密样本时先用公共许可样本和自生成语料，并明确“尚未完成家庭本域验收”，不能偷用私密历史录音。
 
 ### 7.3 指标
 
@@ -530,7 +530,7 @@ ASR报中文CER及错例；alignment报手标区间起止误差分布/失配率�
 
 普通话韵律单独评测：字/音节对齐准确度、拼音/声调正确率、相对半音误差、字内 contour 与句级 trend 的混淆率。重点构造“词汇声调走势与句级语调方向相反”的样本；任何把字调直接解释成心理状态的输出计严重错误。
 
-给char的感知评测分条件比较：`transcript only`、`transcript + 文字韵律谱`、`transcript + 文字韵律谱 + 图`。关注可核验事实准确度、错误解释、未知拒答和无依据情绪断言。图片无增益时仍保留按需查看，但默认继续使用文字韵律谱。
+给周char的感知评测分条件比较：`transcript only`、`transcript + 文字韵律谱`、`transcript + 文字韵律谱 + 图`。关注可核验事实准确度、错误解释、未知拒答和无依据情绪断言。图片无增益时仍保留按需查看，但默认继续使用文字韵律谱。
 
 ## 8. 资源、外发与运行保险
 

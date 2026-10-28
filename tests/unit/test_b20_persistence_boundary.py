@@ -1,4 +1,4 @@
-"""B20 持久层兜底：情绪字段即使藏进 parameters 嵌套也不得落库（char裁定收紧）。"""
+"""B20 持久层兜底：情绪字段即使藏进 parameters 嵌套也不得落库（周char裁定收紧）。"""
 
 import json
 
